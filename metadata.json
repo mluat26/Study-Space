@@ -1,0 +1,7 @@
+{
+  "name": "SmartStudy - Quản lý Học tập",
+  "description": "Ứng dụng quản lý học tập toàn diện với danh sách môn học, công việc, tài liệu và ghi chú. Tích hợp AI để hỗ trợ lên kế hoạch và giải đáp thắc mắc.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
