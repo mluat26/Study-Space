@@ -4,20 +4,10 @@ import { INITIAL_SUBJECTS, INITIAL_TASKS, INITIAL_NOTES, INITIAL_RESOURCES, COLO
 import Dashboard from './components/Dashboard';
 import SubjectDetail from './components/SubjectDetail';
 import SearchManager from './components/SearchManager';
-import { LayoutGrid, Search, Moon, Sun, Database, HardDrive, Download, X, GraduationCap, BookOpen, Menu, ChevronLeft, ChevronRight, Trash2, MoreHorizontal, ArrowUp, ArrowDown, PenSquare, GripVertical, ListFilter, Plus, CheckCircle, FileText, Palette } from 'lucide-react';
+import { LayoutGrid, Search, Moon, Sun, Database, HardDrive, Download, X, GraduationCap, BookOpen, Menu, ChevronLeft, ChevronRight, Trash2, MoreHorizontal, ArrowUp, ArrowDown, PenSquare, GripVertical, ListFilter, Plus, CheckCircle, FileText, Palette, AlertTriangle, RefreshCcw } from 'lucide-react';
+import { dbGet, dbSet, dbClear, getUsageEstimate } from './utils/indexedDB';
 
-function useStickyState<T>(defaultValue: T, key: string): [T, React.Dispatch<React.SetStateAction<T>>] {
-  const [value, setValue] = useState<T>(() => {
-    const stickyValue = window.localStorage.getItem(key);
-    return stickyValue !== null ? JSON.parse(stickyValue) : defaultValue;
-  });
-
-  useEffect(() => {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  }, [key, value]);
-
-  return [value, setValue];
-}
+// --- REMOVED useStickyState in favor of Async Loading ---
 
 const IconPicker = ({ selected, onSelect }: { selected: string, onSelect: (i: string) => void }) => {
     return (
@@ -201,18 +191,25 @@ const SubjectDrawer = ({ isOpen, onClose, onSave, lang, initialData }: any) => {
     )
 }
 
-const StorageView = ({ subjects, tasks, notes, onDeleteSubject, onDeleteTask, onDeleteNote }: any) => {
-    // ... (No changes to StorageView)
+const StorageView = ({ subjects, tasks, notes, onDeleteSubject, onDeleteTask, onDeleteNote, onResetData }: any) => {
     const [activeTab, setActiveTab] = useState<'overview' | 'subjects' | 'tasks' | 'notes'>('overview');
-    const [size, setSize] = useState(0);
-    const LIMIT = 5 * 1024 * 1024; 
+    const [usage, setUsage] = useState({ usage: 0, quota: 0 });
 
     useEffect(() => {
-        const data = JSON.stringify(localStorage);
-        setSize(new Blob([data]).size);
+        const updateUsage = async () => {
+            const data = await getUsageEstimate();
+            setUsage(data);
+        };
+        updateUsage();
+        // Poll every 5 seconds to update usage if data changes
+        const interval = setInterval(updateUsage, 5000);
+        return () => clearInterval(interval);
     }, [subjects, tasks, notes]);
 
-    const percent = (size / LIMIT) * 100;
+    const percent = usage.quota > 0 ? (usage.usage / usage.quota) * 100 : 0;
+    const usedMB = (usage.usage / 1024 / 1024).toFixed(2);
+    // Quota often returns conservative estimate, let's show GB if large
+    const quotaDisplay = (usage.quota / 1024 / 1024 / 1024).toFixed(1) + ' GB';
 
     const downloadBackup = () => {
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({
@@ -224,6 +221,14 @@ const StorageView = ({ subjects, tasks, notes, onDeleteSubject, onDeleteTask, on
         document.body.appendChild(downloadAnchorNode);
         downloadAnchorNode.click();
         downloadAnchorNode.remove();
+    }
+
+    const handleDeleteAll = async () => {
+        if (window.confirm('CẢNH BÁO: Hành động này sẽ xóa toàn bộ dữ liệu của bạn và không thể khôi phục. Bạn có chắc chắn không?')) {
+            if(window.confirm('Xác nhận lần 2: Tất cả ghi chú, công việc và file ghi âm sẽ bị xóa vĩnh viễn.')) {
+                await onResetData();
+            }
+        }
     }
 
     const tabs = [
@@ -253,23 +258,30 @@ const StorageView = ({ subjects, tasks, notes, onDeleteSubject, onDeleteTask, on
                 {activeTab === 'overview' && (
                     <div className="bg-white dark:bg-slate-900/60 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-slate-800 mb-8 backdrop-blur-sm">
                         <div className="flex items-center gap-6 mb-8">
-                            <div className="w-20 h-20 bg-gray-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center text-gray-500 dark:text-gray-400">
+                            <div className="w-20 h-20 bg-emerald-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center text-emerald-600 dark:text-emerald-400">
                                 <HardDrive size={40} />
                             </div>
                             <div className="flex-1">
                                 <div className="flex justify-between mb-2">
-                                    <h3 className="text-xl font-bold text-gray-800 dark:text-white">Local Storage</h3>
-                                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">{(size / 1024).toFixed(2)} KB / 5 MB</span>
+                                    <h3 className="text-xl font-bold text-gray-800 dark:text-white">IndexedDB Storage</h3>
+                                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">{usedMB} MB / {quotaDisplay}</span>
                                 </div>
                                 <div className="w-full bg-gray-100 dark:bg-slate-950 h-4 rounded-full overflow-hidden border border-gray-200 dark:border-slate-800">
-                                    <div className="bg-gradient-to-r from-emerald-400 to-emerald-600 h-full" style={{ width: `${Math.max(percent, 1)}%` }}></div>
+                                    <div className="bg-gradient-to-r from-emerald-400 to-emerald-600 h-full transition-all duration-500" style={{ width: `${Math.max(percent, 1)}%` }}></div>
                                 </div>
-                                <p className="text-xs text-gray-400 dark:text-slate-500/70 mt-2">Dữ liệu được lưu trên trình duyệt của bạn.</p>
+                                <p className="text-xs text-gray-400 dark:text-slate-500/70 mt-2">Dữ liệu được lưu trữ an toàn trên trình duyệt của bạn với dung lượng lớn.</p>
                             </div>
                         </div>
-                        <button onClick={downloadBackup} className="w-full flex items-center justify-center gap-2 bg-gray-100 dark:bg-slate-800 text-gray-800 dark:text-white px-6 py-3 rounded-xl font-bold hover:bg-gray-200 dark:hover:bg-slate-700 transition">
-                            <Download size={20} /> Sao lưu dữ liệu (Backup)
-                        </button>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <button onClick={downloadBackup} className="w-full flex items-center justify-center gap-2 bg-gray-100 dark:bg-slate-800 text-gray-800 dark:text-white px-6 py-3 rounded-xl font-bold hover:bg-gray-200 dark:hover:bg-slate-700 transition">
+                                <Download size={20} /> Sao lưu dữ liệu (Backup)
+                            </button>
+                            
+                            <button onClick={handleDeleteAll} className="w-full flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-900/50 px-6 py-3 rounded-xl font-bold hover:bg-red-100 dark:hover:bg-red-900/40 transition">
+                                <Trash2 size={20} /> Xóa toàn bộ dữ liệu
+                            </button>
+                        </div>
                     </div>
                 )}
              </div>
@@ -380,10 +392,15 @@ const QuickCreateDrawer = ({ subjects, isOpen, onClose, onSave }: { subjects: Su
 }
 
 const App: React.FC = () => {
-  const [subjects, setSubjects] = useStickyState<Subject[]>(INITIAL_SUBJECTS, 'smartstudy_subjects');
-  const [tasks, setTasks] = useStickyState<Task[]>(INITIAL_TASKS, 'smartstudy_tasks');
-  const [notes, setNotes] = useStickyState<Note[]>(INITIAL_NOTES, 'smartstudy_notes');
-  const [resources, setResources] = useStickyState<Resource[]>(INITIAL_RESOURCES, 'smartstudy_resources');
+  // --- Replaced useStickyState with Standard State + IDB Loading ---
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [resources, setResources] = useState<Resource[]>([]);
+  const [darkMode, setDarkMode] = useState<boolean>(false);
+  const [lang, setLang] = useState<Language>('vi');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [isDataLoaded, setIsDataLoaded] = useState(false); // To prevent flashing or empty save
 
   const [currentView, setCurrentView] = useState<'dashboard' | 'search' | 'storage' | string>('dashboard'); 
   const [openedNoteId, setOpenedNoteId] = useState<string | null>(null);
@@ -391,23 +408,64 @@ const App: React.FC = () => {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
-  const [darkMode, setDarkMode] = useStickyState<boolean>(false, 'smartstudy_darkmode');
-  const [lang, setLang] = useStickyState<Language>('vi', 'smartstudy_lang');
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useStickyState<boolean>(false, 'smartstudy_sidebar_collapsed');
   
   // Sidebar Sub-menu Logic (Now a secondary sidebar)
   const [isSubMenuOpen, setIsSubMenuOpen] = useState(false); 
   const [showQuickNoteModal, setShowQuickNoteModal] = useState(false);
 
-  // Storage calculation for Sidebar
-  const [storageUsed, setStorageUsed] = useState('0.00');
+  // Storage calculation for Sidebar (Now using Async Estimate)
+  const [storageDisplay, setStorageDisplay] = useState('0.00');
+
+  // --- 1. Load Data on Mount ---
   useEffect(() => {
-      let total = 0;
-      for(let x in localStorage) {
-          if(localStorage.hasOwnProperty(x)) total += ((localStorage[x].length + x.length) * 2);
-      }
-      setStorageUsed((total / 1024 / 1024).toFixed(2));
-  }, [subjects, tasks, notes, resources]); // Re-calc when data changes
+    const loadData = async () => {
+        try {
+            const s = await dbGet<Subject[]>('smartstudy_subjects');
+            const t = await dbGet<Task[]>('smartstudy_tasks');
+            const n = await dbGet<Note[]>('smartstudy_notes');
+            const r = await dbGet<Resource[]>('smartstudy_resources');
+            const dm = await dbGet<boolean>('smartstudy_darkmode');
+            const l = await dbGet<Language>('smartstudy_lang');
+            const sc = await dbGet<boolean>('smartstudy_sidebar_collapsed');
+
+            // If empty (first load), use INITIAL constants, otherwise use DB data
+            setSubjects(s || INITIAL_SUBJECTS);
+            setTasks(t || INITIAL_TASKS);
+            setNotes(n || INITIAL_NOTES);
+            setResources(r || INITIAL_RESOURCES);
+            setDarkMode(dm || false);
+            setLang(l || 'vi');
+            setIsSidebarCollapsed(sc || false);
+
+            setIsDataLoaded(true);
+        } catch (error) {
+            console.error("Failed to load IndexedDB", error);
+            // Fallback to initial if DB fails
+            setSubjects(INITIAL_SUBJECTS);
+            setIsDataLoaded(true);
+        }
+    };
+    loadData();
+  }, []);
+
+  // --- 2. Save Data on Change (Debounced effects could be better, but simple change detection works for now) ---
+  useEffect(() => { if (isDataLoaded) dbSet('smartstudy_subjects', subjects); }, [subjects, isDataLoaded]);
+  useEffect(() => { if (isDataLoaded) dbSet('smartstudy_tasks', tasks); }, [tasks, isDataLoaded]);
+  useEffect(() => { if (isDataLoaded) dbSet('smartstudy_notes', notes); }, [notes, isDataLoaded]);
+  useEffect(() => { if (isDataLoaded) dbSet('smartstudy_resources', resources); }, [resources, isDataLoaded]);
+  useEffect(() => { if (isDataLoaded) dbSet('smartstudy_darkmode', darkMode); }, [darkMode, isDataLoaded]);
+  useEffect(() => { if (isDataLoaded) dbSet('smartstudy_lang', lang); }, [lang, isDataLoaded]);
+  useEffect(() => { if (isDataLoaded) dbSet('smartstudy_sidebar_collapsed', isSidebarCollapsed); }, [isSidebarCollapsed, isDataLoaded]);
+
+  // Update Storage Display periodically or when data changes
+  useEffect(() => {
+      const updateEstimate = async () => {
+          const est = await getUsageEstimate();
+          setStorageDisplay((est.usage / 1024 / 1024).toFixed(2));
+      };
+      if (isDataLoaded) updateEstimate();
+  }, [subjects, tasks, notes, resources, isDataLoaded]);
+
 
   useEffect(() => {
     if (darkMode) document.documentElement.classList.add('dark');
@@ -482,6 +540,17 @@ const App: React.FC = () => {
       setIsCreatingNote(false);
   }
 
+  const handleResetData = async () => {
+      await dbClear();
+      setSubjects(INITIAL_SUBJECTS);
+      setTasks(INITIAL_TASKS);
+      setNotes(INITIAL_NOTES);
+      setResources(INITIAL_RESOURCES);
+      alert("Đã xóa toàn bộ dữ liệu và khôi phục về mặc định.");
+      // Force reload to ensure clean state
+      window.location.reload();
+  }
+
   // Handle Quick Create Save
   const handleQuickCreate = (type: 'task' | 'note', subjectId: string, content: string) => {
       if (type === 'task') {
@@ -513,6 +582,12 @@ const App: React.FC = () => {
 
   const visibleSubjects = subjects.filter(s => !s.isArchived).slice(0, 4);
   const hiddenSubjects = subjects.filter(s => !s.isArchived).slice(4);
+
+  if (!isDataLoaded) {
+      return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-slate-950">
+          <RefreshCcw className="animate-spin text-emerald-500" size={32} />
+      </div>;
+  }
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-slate-950 text-slate-800 dark:text-slate-50 font-sans overflow-hidden transition-colors flex-row">
@@ -588,11 +663,12 @@ const App: React.FC = () => {
             {!isSidebarCollapsed && (
                 <div className="px-2 mb-2">
                     <div className="flex justify-between text-xs text-gray-400 dark:text-slate-500 mb-1">
-                        <span>Lưu trữ</span>
-                        <span>{storageUsed} MB</span>
+                        <span>Lưu trữ (IDB)</span>
+                        <span>{storageDisplay} MB</span>
                     </div>
+                    {/* Visual bar just for effect, max 500MB scale for visual */}
                     <div className="w-full bg-gray-100 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                        <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${Math.min((parseFloat(storageUsed)/5)*100, 100)}%` }}></div>
+                        <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min((parseFloat(storageDisplay)/500)*100, 100)}%` }}></div>
                     </div>
                 </div>
             )}
@@ -672,7 +748,15 @@ const App: React.FC = () => {
         ) : currentView === 'search' ? (
            <SearchManager tasks={tasks} notes={notes} subjects={subjects} onSelectSubject={setCurrentView} onSelectNote={handleDirectOpenNote}/>
         ) : currentView === 'storage' ? (
-            <StorageView subjects={subjects} tasks={tasks} notes={notes} onDeleteSubject={handleDeleteSubject} onDeleteTask={handleDeleteTask} onDeleteNote={handleDeleteNote}/>
+            <StorageView 
+                subjects={subjects} 
+                tasks={tasks} 
+                notes={notes} 
+                onDeleteSubject={handleDeleteSubject} 
+                onDeleteTask={handleDeleteTask} 
+                onDeleteNote={handleDeleteNote}
+                onResetData={handleResetData} 
+            />
         ) : activeSubject ? (
           <SubjectDetail 
             subject={activeSubject}

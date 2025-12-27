@@ -73,6 +73,10 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
   const [isNoteDirty, setIsNoteDirty] = useState(false); 
   const [activeAudioId, setActiveAudioId] = useState<string | null>(null); // For playing
 
+  // Ref to track title for async recording callback
+  const noteTitleRef = useRef(noteTitle);
+  useEffect(() => { noteTitleRef.current = noteTitle; }, [noteTitle]);
+
   const [resTitle, setResTitle] = useState('');
   const [resUrl, setResUrl] = useState('');
   const [resType, setResType] = useState<'Link' | 'File' | 'Audio'>('Link');
@@ -139,35 +143,21 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       // Find hidden audio data divs (New format)
       const hiddenAudioDivs = doc.querySelectorAll('.smartstudy-audio-data');
       hiddenAudioDivs.forEach(div => {
-          const url = div.getAttribute('data-url');
+          // FIX: Retrieve URL from textContent first (safer for large Base64), fallback to attribute
+          // Cast div to HTMLElement to access innerText if needed, though textContent is standard on Node
+          const urlContent = div.textContent || (div as HTMLElement).innerText;
+          const urlAttr = div.getAttribute('data-url');
+          const url = (urlContent && urlContent.startsWith('data:')) ? urlContent : urlAttr;
+          
           const name = div.getAttribute('data-name') || 'Bản ghi âm';
           const createdAt = div.getAttribute('data-created') || new Date().toISOString();
           const id = div.getAttribute('id') || Date.now().toString() + Math.random();
+          
           if (url) {
-              audios.push({ id, url, name, createdAt });
+              audios.push({ id, url: url.trim(), name, createdAt });
               div.remove(); // Remove from editor content
           }
       });
-
-      // Optional: Clean up legacy <audio> tags if you want to migrate them
-      // For now, let's leave legacy tags alone or they will show in editor.
-      // Or we can aggressive parse:
-      /*
-      const legacyAudios = doc.querySelectorAll('audio');
-      legacyAudios.forEach((audio, idx) => {
-          const src = audio.getAttribute('src');
-          if (src && src.startsWith('data:')) {
-             const id = 'legacy-' + idx;
-             audios.push({ id, url: src, name: 'Ghi âm cũ ' + (idx + 1), createdAt: new Date().toISOString() });
-             // Remove the parent container if it looks like our old wrapper
-             if (audio.parentElement && audio.parentElement.classList.contains('bg-sky-50')) {
-                 audio.parentElement.remove();
-             } else {
-                 audio.remove();
-             }
-          }
-      });
-      */
 
       return {
           cleanedContent: doc.body.innerHTML,
@@ -296,23 +286,19 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       if(!finalTitle) finalTitle = "Untitled Note";
       
       // --- MERGE AUDIO ATTACHMENTS INTO CONTENT ---
-      // We append hidden divs containing the base64 data so it's self-contained in the note content string
-      // independent of any other database tables.
+      // FIX: Store Base64 URL in innerHTML/innerText to avoid attribute truncation limits in some browsers
       let audioHtml = '';
       if (audioAttachments.length > 0) {
           audioHtml = audioAttachments.map(audio => `
             <div 
                 id="${audio.id}" 
                 class="smartstudy-audio-data" 
-                data-url="${audio.url}" 
                 data-name="${audio.name}" 
                 data-created="${audio.createdAt}" 
                 style="display:none;"
-            ></div>
+            >${audio.url}</div>
           `).join('');
       }
-      // Be careful not to duplicate if we are re-saving
-      // The parseNoteContent removed them from `content` state, so appending is safe.
       const finalContent = content + audioHtml;
 
       setNoteTitle(finalTitle);
@@ -355,7 +341,15 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           setRecordingStream(stream); 
           
-          const mediaRecorder = new MediaRecorder(stream);
+          // FIX: Detect supported MIME type
+          let mimeType = 'audio/webm';
+          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+              mimeType = 'audio/webm;codecs=opus';
+          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+              mimeType = 'audio/mp4'; // Safari fallback
+          }
+
+          const mediaRecorder = new MediaRecorder(stream, { mimeType });
           mediaRecorderRef.current = mediaRecorder;
           chunksRef.current = [];
 
@@ -364,7 +358,7 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
           };
 
           mediaRecorder.onstop = () => {
-              const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+              const blob = new Blob(chunksRef.current, { type: mimeType });
               const reader = new FileReader();
               reader.readAsDataURL(blob);
               reader.onloadend = () => {
@@ -372,9 +366,11 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                   const timestamp = new Date();
                   const timeString = timestamp.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
                   
-                  // 1. Add to Audio List State (No longer inserting into Editor directly)
+                  const newAudioId = Date.now().toString();
+
+                  // 1. Save to Note's attachments
                   const newAudio: AudioAttachment = {
-                      id: Date.now().toString(),
+                      id: newAudioId,
                       url: base64data,
                       name: `Ghi âm ${timeString}`,
                       createdAt: timestamp.toISOString()
@@ -384,15 +380,19 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                   setIsAudioSidebarOpen(true); // Open sidebar to show result
                   setIsNoteDirty(true); // Mark as dirty
 
-                  // 2. Save as Resource (Back up)
-                  const autoTitle = `Ghi âm: ${noteTitle || 'Ghi chú'} (${timeString})`;
-                  onAddResource({
-                      id: Date.now().toString(),
+                  // 2. ALSO Save to Resources (Auto-sync)
+                  const currentTitle = noteTitleRef.current.trim() || "Ghi chú chưa đặt tên";
+                  const dateTimeStr = timestamp.toLocaleString('vi-VN');
+                  
+                  const newResource: Resource = {
+                      id: `res-audio-${newAudioId}`,
                       subjectId: subject.id,
-                      title: autoTitle,
+                      title: `${currentTitle} - ${dateTimeStr}`,
                       type: 'Audio',
-                      url: base64data
-                  });
+                      url: base64data,
+                      transcription: '' 
+                  };
+                  onAddResource(newResource);
               }
 
               stream.getTracks().forEach(track => track.stop());
