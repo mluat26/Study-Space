@@ -1,5 +1,15 @@
 import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
-import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight, RotateCcw, RotateCw, Type, Palette, ChevronDown, Sparkles } from 'lucide-react';
+import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight, RotateCcw, RotateCw, Type, Palette, ChevronDown, Sparkles, Image as ImageIcon, FileUp, MoreHorizontal, Trash, Maximize2, Minimize2, Settings, HelpCircle, Keyboard, X, Link as LinkIcon } from 'lucide-react';
+import * as mammoth from "https://esm.sh/mammoth@1.6.0";
+import * as pdfjsLib from "https://esm.sh/pdfjs-dist@3.11.174";
+
+// Handle inconsistent ESM export structure for pdfjs-dist
+const pdfjs = (pdfjsLib as any).default || pdfjsLib;
+
+// Worker config for PDF.js
+if (pdfjs.GlobalWorkerOptions) {
+    pdfjs.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+}
 
 export interface RichTextEditorRef {
     insertContent: (html: string) => void;
@@ -19,6 +29,13 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
     const editorRef = useRef<HTMLDivElement>(null);
     const [fontName, setFontName] = useState('Inter');
     const [summary, setSummary] = useState('');
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const docInputRef = useRef<HTMLInputElement>(null);
+    const [showShortcuts, setShowShortcuts] = useState(false);
+
+    // Image Editing State
+    const [selectedImage, setSelectedImage] = useState<HTMLImageElement | null>(null);
+    const [imgToolbarPos, setImgToolbarPos] = useState({ x: 0, y: 0 });
 
     useImperativeHandle(ref, () => ({
         insertContent: (html: string) => {
@@ -30,8 +47,6 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
         },
         getContent: () => {
             const editorContent = editorRef.current ? editorRef.current.innerHTML : '';
-            // If we have a summary, prepend it as a hidden div for storage/persistence
-            // We use 'ai-summary-content' class for backward compatibility and parsing
             if (summary && summary.trim().length > 0) {
                 return `<div class="ai-summary-content" style="display:none">${summary}</div>${editorContent}`;
             }
@@ -45,24 +60,17 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
         }
     }));
 
-    // Initial Load Parsing
     useEffect(() => {
         if (initialContent) {
-            // Create a temporary DOM to parse the content
             const parser = new DOMParser();
             const doc = parser.parseFromString(initialContent, 'text/html');
-            
-            // Check for hidden summary div (using the class we save with)
             const summaryDiv = doc.querySelector('.ai-summary-content');
-            
-            // Check for legacy/alternative class just in case
             const legacySummaryDiv = doc.querySelector('.smartstudy-ai-summary');
-
             const targetDiv = summaryDiv || legacySummaryDiv;
 
             if (targetDiv) {
                 setSummary(targetDiv.innerHTML);
-                targetDiv.remove(); // Remove from the content that goes into the editable area
+                targetDiv.remove(); 
                 if(editorRef.current) editorRef.current.innerHTML = doc.body.innerHTML;
             } else {
                 setSummary('');
@@ -72,7 +80,41 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
             setSummary('');
             if(editorRef.current) editorRef.current.innerHTML = '';
         }
-    }, []); // Run once on mount
+    }, []); 
+
+    // Handle clicks inside editor to detect image selection
+    useEffect(() => {
+        const handleClick = (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'IMG' && editorRef.current?.contains(target)) {
+                const img = target as HTMLImageElement;
+                setSelectedImage(img);
+                
+                // Calculate position relative to the image
+                const rect = img.getBoundingClientRect();
+                const editorRect = editorRef.current.getBoundingClientRect();
+                
+                // Position toolbar above the image
+                setImgToolbarPos({
+                    x: rect.left - editorRect.left + (rect.width / 2) - 100, // Center horizontally relative to editor
+                    y: img.offsetTop - 50 // Above image
+                });
+            } else {
+                setSelectedImage(null);
+            }
+        };
+
+        const currentEditor = editorRef.current;
+        if (currentEditor) {
+            currentEditor.addEventListener('click', handleClick);
+        }
+
+        return () => {
+            if (currentEditor) {
+                currentEditor.removeEventListener('click', handleClick);
+            }
+        }
+    }, []);
 
     const handleChange = () => {
         if (editorRef.current) {
@@ -85,13 +127,203 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
         handleChange();
     };
 
+    const insertLink = () => {
+        const url = prompt("Nhập đường dẫn (URL):", "https://");
+        if(url) {
+            document.execCommand("createLink", false, url);
+            handleChange();
+        }
+    };
+
+    // --- Keyboard Event Handlers ---
     const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        // Handle Save Shortcut (Ctrl + S)
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {
             e.preventDefault();
             if(onSave) onSave();
             return;
         }
+
+        // Handle Tab indentation
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            document.execCommand('insertHTML', false, '&nbsp;&nbsp;&nbsp;&nbsp;');
+        }
     };
+
+    // --- Markdown Shortcuts Logic ---
+    const handleKeyUp = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        // Handle Markdown Shortcuts on SPACE
+        if (e.key === ' ') {
+            const selection = window.getSelection();
+            if (!selection || !selection.rangeCount) return;
+
+            const range = selection.getRangeAt(0);
+            const node = range.startContainer;
+
+            // We only care if we are inside a text node
+            if (node.nodeType === Node.TEXT_NODE && node.textContent) {
+                const text = node.textContent;
+                const caretPos = range.startOffset;
+                
+                // Get text up to caret and normalize non-breaking spaces
+                const textBeforeCaret = text.substring(0, caretPos).replace(/\u00A0/g, ' '); 
+                
+                // Patterns to look for (Must match exact start of line pattern)
+                const patterns: Record<string, { cmd: string, val?: string }> = {
+                    '# ': { cmd: 'formatBlock', val: 'H1' },
+                    '## ': { cmd: 'formatBlock', val: 'H2' },
+                    '### ': { cmd: 'formatBlock', val: 'H3' },
+                    '* ': { cmd: 'insertUnorderedList' },
+                    '- ': { cmd: 'insertUnorderedList' },
+                    '1. ': { cmd: 'insertOrderedList' },
+                    '> ': { cmd: 'formatBlock', val: 'BLOCKQUOTE' },
+                    '``` ': { cmd: 'formatBlock', val: 'PRE' }, // Code block
+                };
+
+                // Check if text matches pattern exactly (indicating start of line)
+                const matchedPattern = Object.keys(patterns).find(p => textBeforeCaret === p);
+
+                if (matchedPattern) {
+                    const pattern = patterns[matchedPattern];
+                    
+                    // 1. Remove the trigger characters (e.g. "# ")
+                    const newRange = document.createRange();
+                    newRange.setStart(node, 0);
+                    newRange.setEnd(node, caretPos);
+                    selection.removeAllRanges();
+                    selection.addRange(newRange);
+                    document.execCommand('delete');
+
+                    // 2. Execute Format
+                    document.execCommand(pattern.cmd, false, pattern.val || '');
+                    
+                    handleChange();
+                }
+            }
+        }
+    };
+
+    // --- Image Compression & Insertion ---
+    const compressImage = (file: File): Promise<string> => {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = (event) => {
+                const img = new Image();
+                img.src = event.target?.result as string;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX_WIDTH = 1000;
+                    const scaleSize = MAX_WIDTH / img.width;
+                    const width = (img.width > MAX_WIDTH) ? MAX_WIDTH : img.width;
+                    const height = (img.width > MAX_WIDTH) ? img.height * scaleSize : img.height;
+
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx?.drawImage(img, 0, 0, width, height);
+                    
+                    // Compress to JPEG with 0.7 quality
+                    resolve(canvas.toDataURL('image/jpeg', 0.7));
+                }
+            }
+        });
+    }
+
+    const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            try {
+                const compressedDataUrl = await compressImage(file);
+                // Insert image
+                if (editorRef.current) {
+                    editorRef.current.focus();
+                    document.execCommand('insertImage', false, compressedDataUrl);
+                    // Add some default styling to prevent massive overflow immediately
+                    const imgs = editorRef.current.getElementsByTagName('img');
+                    const lastImg = imgs[imgs.length - 1];
+                    if (lastImg) {
+                        lastImg.style.maxWidth = '100%';
+                        lastImg.style.borderRadius = '8px';
+                        lastImg.style.boxShadow = '0 4px 6px -1px rgb(0 0 0 / 0.1)';
+                    }
+                    handleChange();
+                }
+            } catch (err) {
+                console.error("Image upload failed", err);
+                alert("Lỗi khi tải ảnh.");
+            }
+        }
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+
+    // --- Image Resize Actions ---
+    const resizeImage = (size: 'small' | 'medium' | 'large' | 'auto') => {
+        if (!selectedImage) return;
+        
+        if (size === 'small') selectedImage.style.width = '25%';
+        else if (size === 'medium') selectedImage.style.width = '50%';
+        else if (size === 'large') selectedImage.style.width = '75%';
+        else selectedImage.style.width = '100%';
+        
+        selectedImage.style.height = 'auto';
+        handleChange();
+        setSelectedImage(null); // Close toolbar
+    };
+
+    const removeImage = () => {
+        if(selectedImage) {
+            selectedImage.remove();
+            handleChange();
+            setSelectedImage(null);
+        }
+    };
+
+    // --- Doc Import (PDF/Word) ---
+    const handleDocImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        try {
+            if (file.type === 'application/pdf') {
+                const arrayBuffer = await file.arrayBuffer();
+                const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
+                const pdf = await loadingTask.promise;
+                let fullText = '';
+                
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    const pageText = textContent.items.map((item: any) => item.str).join(' ');
+                    fullText += `<p><strong>Page ${i}:</strong> ${pageText}</p>`;
+                }
+                
+                if (editorRef.current) {
+                    editorRef.current.focus();
+                    document.execCommand('insertHTML', false, `<hr/><h3>Imported PDF: ${file.name}</h3>${fullText}<hr/>`);
+                    handleChange();
+                }
+
+            } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+                const arrayBuffer = await file.arrayBuffer();
+                const result = await mammoth.convertToHtml({ arrayBuffer: arrayBuffer });
+                
+                if (editorRef.current) {
+                    editorRef.current.focus();
+                    document.execCommand('insertHTML', false, `<hr/><h3>Imported Doc: ${file.name}</h3>${result.value}<hr/>`);
+                    handleChange();
+                }
+            } else {
+                alert("Định dạng file không được hỗ trợ (chỉ hỗ trợ PDF và Docx)");
+            }
+        } catch (err) {
+            console.error("Import error", err);
+            alert("Lỗi khi đọc file. Vui lòng thử file khác.");
+        }
+
+        if (docInputRef.current) docInputRef.current.value = '';
+    }
 
     const fonts = [
         { name: 'Sans Serif', value: 'Inter, sans-serif' },
@@ -100,8 +332,21 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
         { name: 'Cursive', value: 'Comic Sans MS, cursive' },
     ];
 
+    const shortcuts = [
+        { key: '# + Space', desc: 'Heading 1' },
+        { key: '## + Space', desc: 'Heading 2' },
+        { key: '### + Space', desc: 'Heading 3' },
+        { key: '* + Space', desc: 'Danh sách chấm' },
+        { key: '- + Space', desc: 'Danh sách chấm' },
+        { key: '1. + Space', desc: 'Danh sách số' },
+        { key: '> + Space', desc: 'Trích dẫn' },
+        { key: '``` + Space', desc: 'Khung Code' },
+        { key: 'Ctrl + B/I/U', desc: 'Đậm/Nghiêng/Gạch' },
+        { key: 'Tab', desc: 'Thụt đầu dòng' },
+    ];
+
     return (
-        <div className="flex flex-col h-full border border-gray-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-sm transition-colors relative group">
+        <div className="flex flex-col h-full border border-gray-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-sm transition-colors relative group w-full">
             
             {/* Toolbar */}
             <div className="flex items-center gap-1 p-2 border-b border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900 sticky top-0 z-10 flex-wrap shrink-0">
@@ -136,6 +381,48 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                 </div>
                 <div className="h-4 w-px bg-gray-200 dark:bg-slate-700 mx-1"></div>
 
+                {/* Media & Import */}
+                <div className="flex items-center gap-0.5">
+                    <button 
+                        onClick={insertLink}
+                        className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-800 rounded text-blue-500 dark:text-blue-400" 
+                        title="Chèn Link"
+                    >
+                        <LinkIcon size={16}/>
+                    </button>
+
+                    <button 
+                        onClick={() => fileInputRef.current?.click()} 
+                        className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-800 rounded text-emerald-600 dark:text-emerald-400" 
+                        title="Chèn ảnh (Nén)"
+                    >
+                        <ImageIcon size={16}/>
+                    </button>
+                    <input 
+                        type="file" 
+                        accept="image/*" 
+                        ref={fileInputRef} 
+                        onChange={handleImageUpload} 
+                        className="hidden"
+                    />
+
+                    <button 
+                        onClick={() => docInputRef.current?.click()} 
+                        className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-800 rounded text-blue-600 dark:text-blue-400" 
+                        title="Import PDF/Word"
+                    >
+                        <FileUp size={16}/>
+                    </button>
+                    <input 
+                        type="file" 
+                        accept=".pdf,.docx" 
+                        ref={docInputRef} 
+                        onChange={handleDocImport} 
+                        className="hidden"
+                    />
+                </div>
+                <div className="h-4 w-px bg-gray-200 dark:bg-slate-700 mx-1"></div>
+
                 {/* Color & Font */}
                 <div className="flex items-center gap-2">
                     <div className="relative group/color cursor-pointer p-1.5 hover:bg-gray-100 dark:hover:bg-slate-800 rounded flex items-center justify-center">
@@ -165,8 +452,24 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
             </div>
             
             {/* Editor Container */}
-            <div className="flex-1 overflow-y-auto relative flex flex-col p-6 cursor-text" onClick={() => editorRef.current?.focus()}>
+            <div className="flex-1 overflow-y-auto relative flex flex-col p-6 cursor-text relative" onClick={() => editorRef.current?.focus()}>
                 
+                {/* Floating Image Toolbar */}
+                {selectedImage && (
+                    <div 
+                        className="absolute z-50 flex items-center gap-1 bg-white dark:bg-slate-800 p-1.5 rounded-lg shadow-xl border border-gray-200 dark:border-slate-700 animate-in fade-in zoom-in duration-200"
+                        style={{ top: Math.max(10, imgToolbarPos.y), left: Math.max(10, imgToolbarPos.x) }}
+                        onMouseDown={(e) => e.preventDefault()} // Prevent losing focus
+                    >
+                        <button onClick={() => resizeImage('small')} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700 rounded text-xs font-bold text-gray-600 dark:text-gray-300">25%</button>
+                        <button onClick={() => resizeImage('medium')} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700 rounded text-xs font-bold text-gray-600 dark:text-gray-300">50%</button>
+                        <button onClick={() => resizeImage('large')} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700 rounded text-xs font-bold text-gray-600 dark:text-gray-300">75%</button>
+                        <button onClick={() => resizeImage('auto')} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700 rounded text-xs font-bold text-gray-600 dark:text-gray-300">Auto</button>
+                        <div className="w-px h-4 bg-gray-300 dark:bg-slate-600 mx-1"></div>
+                        <button onClick={removeImage} className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/30 rounded text-red-500"><Trash size={14}/></button>
+                    </div>
+                )}
+
                 {/* AI Summary Box */}
                 <div className={`mb-6 p-5 rounded-2xl transition-all duration-300 select-none ${summary ? 'bg-emerald-50 dark:bg-emerald-900/10 opacity-100' : 'bg-slate-50 dark:bg-slate-800/30 opacity-40 hover:opacity-100'}`}>
                     <div className="flex items-center gap-2 mb-2">
@@ -187,13 +490,43 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                 {/* Content Editable */}
                 <div 
                     ref={editorRef}
-                    className="flex-1 outline-none prose prose-slate max-w-none dark:prose-invert prose-p:my-2 prose-headings:mb-3 prose-headings:mt-4"
+                    className="flex-1 outline-none prose prose-slate max-w-none dark:prose-invert prose-p:my-2 prose-headings:mb-3 prose-headings:mt-4 prose-img:rounded-xl prose-img:shadow-sm"
                     contentEditable
                     onInput={handleChange}
+                    onKeyUp={handleKeyUp}
                     onKeyDown={handleKeyDown}
                     data-placeholder={placeholder}
                     style={{ fontSize: '15px', lineHeight: '1.7', minHeight: '100px' }}
                 />
+
+                {/* Floating Shortcut Help Button */}
+                <div className="absolute bottom-4 right-4 z-20 print:hidden">
+                    <button 
+                        onClick={() => setShowShortcuts(!showShortcuts)}
+                        className={`p-2.5 rounded-full shadow-lg transition-all ${showShortcuts ? 'bg-emerald-600 text-white' : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:text-emerald-600 border border-gray-100 dark:border-slate-700'}`}
+                        title="Phím tắt gõ nhanh"
+                    >
+                        {showShortcuts ? <X size={20}/> : <Keyboard size={20}/>}
+                    </button>
+
+                    {/* Shortcuts Popover */}
+                    {showShortcuts && (
+                        <div className="absolute bottom-14 right-0 w-72 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-700 p-4 animate-in slide-in-from-bottom-2 fade-in duration-200 z-50">
+                            <h4 className="text-sm font-bold text-gray-800 dark:text-white mb-3 flex items-center gap-2">
+                                <HelpCircle size={16} className="text-emerald-500"/>
+                                Phím tắt (Markdown)
+                            </h4>
+                            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                {shortcuts.map((s, i) => (
+                                    <div key={i} className="flex justify-between items-center text-xs group hover:bg-gray-50 dark:hover:bg-slate-700/50 p-1 rounded">
+                                        <code className="bg-gray-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-emerald-600 dark:text-emerald-400 font-mono font-bold border border-gray-200 dark:border-slate-600">{s.key}</code>
+                                        <span className="text-gray-500 dark:text-slate-400">{s.desc}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
 
             <style>{`
@@ -212,6 +545,15 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                 .prose::-webkit-scrollbar { width: 6px; }
                 .prose::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
                 .dark .prose::-webkit-scrollbar-thumb { background-color: #334155; }
+                
+                /* Image Selection Highlight */
+                img {
+                    transition: box-shadow 0.2s;
+                }
+                img:hover {
+                    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.4);
+                    cursor: pointer;
+                }
             `}</style>
         </div>
     );

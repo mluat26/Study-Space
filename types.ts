@@ -34,4 +34,19 @@ export interface Resource {
   transcription?: string; // For Audio types
 }
 
+export interface TrashItem {
+  id: string; // ID of the deleted item
+  originalId: string;
+  type: 'subject' | 'task' | 'note' | 'resource';
+  data: any; // Store the full object to restore
+  deletedAt: string;
+  originalName: string;
+  // For subjects, we might store children to restore them too
+  relatedData?: {
+      tasks?: Task[];
+      notes?: Note[];
+      resources?: Resource[];
+  };
+}
+
 export type Language = 'vi' | 'en';

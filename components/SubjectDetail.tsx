@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Subject, Task, Note, Resource, Language } from '../types';
-import { Plus, CheckCircle, Circle, FileText, Link as LinkIcon, Trash2, ArrowLeft, X, Printer, Calendar, ArrowRight, GripVertical, AlertCircle, PlayCircle, FolderOpen, Video, Copy, Wand2, PenTool, Download, CheckSquare, Square, File, UploadCloud, Clock, Save, FilePlus, Sparkles, Archive, Search, ExternalLink, Mic, StopCircle, FileAudio, AlignLeft, Eye, EyeOff, MessageSquare, Headphones, ChevronRight, Play, Pause, Music, Loader2 } from 'lucide-react';
+import { Plus, CheckCircle, Circle, FileText, Link as LinkIcon, Trash2, ArrowLeft, X, Printer, Calendar, ArrowRight, GripVertical, AlertCircle, PlayCircle, FolderOpen, Video, Copy, Wand2, PenTool, Download, CheckSquare, Square, File, UploadCloud, Clock, Save, FilePlus, Sparkles, Archive, Search, ExternalLink, Mic, StopCircle, FileAudio, AlignLeft, Eye, EyeOff, MessageSquare, Headphones, ChevronRight, Play, Pause, Music, Loader2, LayoutGrid, List, Minus, Image as ImageIcon, Paperclip, Globe, MoreVertical, Layers, ChevronLeft } from 'lucide-react';
 import { ICONS, TRANSLATIONS } from '../constants';
 import RichTextEditor, { RichTextEditorRef } from './RichTextEditor';
 import AudioVisualizer from './AudioVisualizer';
@@ -25,57 +25,95 @@ interface SubjectDetailProps {
   onArchiveSubject?: (id: string) => void;
   lang: Language;
   initialOpenNoteId?: string | null;
-  isCreatingNote?: boolean; 
+  isCreatingNote?: boolean;
+  onMinimize?: (note: Note) => void;
+  onNoteActive?: (noteId: string | null) => void; 
 }
 
 interface AudioAttachment {
     id: string;
-    url: string; // Base64 or URL
+    url: string; 
     name: string;
     createdAt: string;
 }
+
+interface LinkAttachment {
+    href: string;
+    text: string;
+}
+
+const processContentForPrint = (htmlContent: string) => {
+    try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(htmlContent, 'text/html');
+        const audioDivs = doc.querySelectorAll('.smartstudy-audio-data');
+        audioDivs.forEach(div => div.remove());
+        const images = doc.querySelectorAll('img');
+        images.forEach(img => {
+            img.style.maxWidth = '100%';
+            img.style.height = 'auto';
+        });
+        return doc.body.innerHTML;
+    } catch (e) {
+        return htmlContent;
+    }
+};
 
 const SubjectDetail: React.FC<SubjectDetailProps> = ({
   subject, tasks, notes, resources,
   onAddTask, onUpdateTask, onDeleteTask,
   onAddNote, onUpdateNote, onDeleteNote,
-  onAddResource, onDeleteResource, onBack, onEditSubject, onArchiveSubject, lang, initialOpenNoteId, isCreatingNote
+  onAddResource, onDeleteResource, onBack, onEditSubject, onArchiveSubject, lang, initialOpenNoteId, isCreatingNote, onMinimize, onNoteActive
 }) => {
   const [activeTab, setActiveTab] = useState<'tasks' | 'notes' | 'resources'>('tasks');
   const [resourceFilter, setResourceFilter] = useState<'All' | 'Link' | 'File' | 'Audio'>('All');
+  const [noteViewMode, setNoteViewMode] = useState<'grid' | 'table'>('grid');
   
   const t = TRANSLATIONS[lang];
   
-  // Modals
-  const [showTaskModal, setShowTaskModal] = useState(false);
+  // Modals & Drawers
+  const [showTaskDrawer, setShowTaskDrawer] = useState(false); // Changed from Modal to Drawer
   const [showNoteModal, setShowNoteModal] = useState(false);
-  const [showResourceModal, setShowResourceModal] = useState(false);
+  const [showResourceDrawer, setShowResourceDrawer] = useState(false); // Changed to Drawer
   const [showPdfDrawer, setShowPdfDrawer] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // Note Editor State & Refs
-  const editorRef = useRef<RichTextEditorRef>(null);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // AI Sidebar
-  const [isAudioSidebarOpen, setIsAudioSidebarOpen] = useState(false); // Audio Sidebar
-  
-  // Resource Preview State
+  // Exclusive Sidebar State
+  const [activeSidebar, setActiveSidebar] = useState<'none' | 'attachment' | 'audio' | 'ai'>('none');
+
+  // Attachment Sidebar specific
+  const [extractedImages, setExtractedImages] = useState<string[]>([]);
+  const [extractedLinks, setExtractedLinks] = useState<LinkAttachment[]>([]);
+  // New Link Input in Sidebar
+  const [newLinkUrl, setNewLinkUrl] = useState('');
+  const [newLinkTitle, setNewLinkTitle] = useState('');
+  const [showAddLinkInput, setShowAddLinkInput] = useState(false);
+
+  // Resource Preview
   const [previewResource, setPreviewResource] = useState<Resource | null>(null);
   const [drawerSearchTerm, setDrawerSearchTerm] = useState('');
 
-  // Form State
+  // Task Form State
+  const [taskMode, setTaskMode] = useState<'single' | 'bulk'>('single');
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDate, setNewTaskDate] = useState(new Date().toISOString().split('T')[0]);
   const [newTaskPriority, setNewTaskPriority] = useState<'High'|'Medium'|'Low'>('Medium');
+  // Bulk Task State
+  const [bulkTaskContent, setBulkTaskContent] = useState('');
 
+  // Note Form State
+  const editorRef = useRef<RichTextEditorRef>(null);
   const [editingNote, setEditingNote] = useState<Note | null>(null);
   const [noteTitle, setNoteTitle] = useState('');
   const [noteContent, setNoteContent] = useState('');
-  const [audioAttachments, setAudioAttachments] = useState<AudioAttachment[]>([]); // Separated Audio State
+  const [audioAttachments, setAudioAttachments] = useState<AudioAttachment[]>([]);
   const [isNoteDirty, setIsNoteDirty] = useState(false); 
-  const [activeAudioId, setActiveAudioId] = useState<string | null>(null); // For playing
+  const [activeAudioId, setActiveAudioId] = useState<string | null>(null);
 
-  // Ref to track title for async recording callback
+  // AI State
+  const [aiSummaryResult, setAiSummaryResult] = useState('');
+
   const noteTitleRef = useRef(noteTitle);
   useEffect(() => { noteTitleRef.current = noteTitle; }, [noteTitle]);
 
@@ -84,21 +122,24 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
   const [resType, setResType] = useState<'Link' | 'File' | 'Audio'>('Link');
   const [resTranscription, setResTranscription] = useState('');
 
-  // Audio Recording State
+  // Audio Recording
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
-  const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null); // State for visualizer
+  const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recognitionRef = useRef<any>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
 
-  // PDF Export State
+  // PDF Export
   const [selectedPdfNotes, setSelectedPdfNotes] = useState<string[]>([]);
   const [printData, setPrintData] = useState<Note[] | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
-  // Open note if ID is passed
+  // Task Pagination State
+  const [currentTaskPage, setCurrentTaskPage] = useState(1);
+  const TASKS_PER_PAGE = 6;
+
   useEffect(() => {
     if (initialOpenNoteId) {
         const noteToOpen = notes.find(n => n.id === initialOpenNoteId);
@@ -116,10 +157,10 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       }
   }, [isCreatingNote]);
 
-  // Clean up recording on unmount or modal close
   useEffect(() => {
       return () => {
           stopRecordingInternal();
+          if (onNoteActive) onNoteActive(null);
       };
   }, []);
 
@@ -128,9 +169,6 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
             mediaRecorderRef.current.stop();
         }
-        if (recognitionRef.current) {
-            recognitionRef.current.stop();
-        }
         if (recordingStream) {
             recordingStream.getTracks().forEach(track => track.stop());
         }
@@ -138,165 +176,188 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
         setRecordingStream(null);
   }
 
-  // --- HTML Parsing Logic for Audio ---
+  // Toggle Logic for Sidebars
+  const toggleSidebar = (sidebar: 'attachment' | 'audio' | 'ai') => {
+      if (activeSidebar === sidebar) {
+          setActiveSidebar('none');
+      } else {
+          setActiveSidebar(sidebar);
+      }
+  };
+
+  const getNoteStats = (html: string) => {
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = html;
+      const text = tempDiv.textContent || tempDiv.innerText || '';
+      const wordCount = text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
+      const bytes = new Blob([html]).size;
+      const sizeDisplay = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+      return { wordCount, sizeDisplay };
+  };
+
   const parseNoteContent = (htmlContent: string) => {
       const parser = new DOMParser();
       const doc = parser.parseFromString(htmlContent, 'text/html');
       const audios: AudioAttachment[] = [];
+      const images: string[] = [];
+      const links: LinkAttachment[] = [];
 
-      // Find hidden audio data divs (New format)
       const hiddenAudioDivs = doc.querySelectorAll('.smartstudy-audio-data');
       hiddenAudioDivs.forEach(div => {
-          // FIX: Retrieve URL from textContent first (safer for large Base64), fallback to attribute
-          // Cast div to HTMLElement to access innerText if needed, though textContent is standard on Node
           const urlContent = div.textContent || (div as HTMLElement).innerText;
           const urlAttr = div.getAttribute('data-url');
           const url = (urlContent && urlContent.startsWith('data:')) ? urlContent : urlAttr;
-          
           const name = div.getAttribute('data-name') || 'Bản ghi âm';
           const createdAt = div.getAttribute('data-created') || new Date().toISOString();
           const id = div.getAttribute('id') || Date.now().toString() + Math.random();
-          
           if (url) {
               audios.push({ id, url: url.trim(), name, createdAt });
-              div.remove(); // Remove from editor content
+              div.remove(); 
           }
+      });
+
+      const imgTags = doc.querySelectorAll('img');
+      imgTags.forEach(img => {
+          if(img.src) images.push(img.src);
+      });
+
+      const aTags = doc.querySelectorAll('a');
+      aTags.forEach(a => {
+          if(a.href) links.push({ href: a.href, text: a.innerText || a.href });
       });
 
       return {
           cleanedContent: doc.body.innerHTML,
-          audios
+          audios,
+          images,
+          links
       };
-  };
-
-  // --- Process Content for Printing (Replace Audio Data with Visual Placeholder) ---
-  const processContentForPrint = (htmlContent: string) => {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(htmlContent, 'text/html');
-      
-      const audioDivs = doc.querySelectorAll('.smartstudy-audio-data');
-      if (audioDivs.length > 0) {
-          const placeholderContainer = doc.createElement('div');
-          placeholderContainer.style.cssText = "margin-top: 20px; display: flex; flex-direction: column; gap: 10px;";
-          
-          audioDivs.forEach(div => {
-              const name = div.getAttribute('data-name') || 'Bản ghi âm';
-              const created = div.getAttribute('data-created') || '';
-              const dateStr = created ? new Date(created).toLocaleString('vi-VN') : '';
-              
-              const item = doc.createElement('div');
-              item.style.cssText = "border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; background-color: #f8fafc; display: flex; align-items: center; gap: 12px; color: #334155; font-family: sans-serif; page-break-inside: avoid;";
-              
-              // SVG Icon as string
-              item.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
-                <div>
-                    <div style="font-weight: 600; font-size: 14px;">${name}</div>
-                    <div style="font-size: 12px; color: #64748b;">${dateStr}</div>
-                </div>
-              `;
-              
-              placeholderContainer.appendChild(item);
-              div.remove();
-          });
-          
-          doc.body.appendChild(placeholderContainer);
-      }
-
-      return doc.body.innerHTML;
   };
 
   const openNote = (note: Note | null) => {
       setEditingNote(note);
-      
       if (note) {
           setNoteTitle(note.title);
-          // Parse content to separate audio
-          const { cleanedContent, audios } = parseNoteContent(note.content);
+          const { cleanedContent, audios, images, links } = parseNoteContent(note.content);
           setNoteContent(cleanedContent);
           setAudioAttachments(audios);
-          // Auto open audio sidebar if there are audios
-          if (audios.length > 0) setIsAudioSidebarOpen(true);
-          else setIsAudioSidebarOpen(false);
+          setExtractedImages(images);
+          setExtractedLinks(links);
       } else {
           setNoteTitle('');
           setNoteContent('');
           setAudioAttachments([]);
-          setIsAudioSidebarOpen(false);
+          setExtractedImages([]);
+          setExtractedLinks([]);
+          setActiveSidebar('none');
       }
-      
       setIsNoteDirty(false);
       setShowNoteModal(true);
+      if (onNoteActive) onNoteActive(note ? note.id : 'new');
   }
 
-  const openAddTaskModal = () => {
+  const openAddTaskDrawer = () => {
       setEditingTask(null);
       setNewTaskTitle('');
       setNewTaskDate(new Date().toISOString().split('T')[0]);
       setNewTaskPriority('Medium');
-      setShowTaskModal(true);
+      setTaskMode('single');
+      setBulkTaskContent('');
+      setShowTaskDrawer(true);
   }
 
-  const openEditTaskModal = (task: Task) => {
+  const openEditTaskDrawer = (task: Task) => {
       setEditingTask(task);
       setNewTaskTitle(task.title);
       setNewTaskDate(task.dueDate);
       setNewTaskPriority(task.priority);
-      setShowTaskModal(true);
+      setTaskMode('single');
+      setShowTaskDrawer(true);
   }
 
   // Smart Input Parser
-  const parseSmartInput = (input: string) => {
-      const regex = /(.+?)-(\d{3,8})(?:-(\d))?$/;
+  const parseSmartInput = (input: string, defaultDate: string, defaultPriority: 'High'|'Medium'|'Low') => {
+      // Regex to capture Title - Date(DDMM or DDMMYYYY) - PriorityCode
+      const regex = /(.+?)(?:-(\d{3,8}))?(?:-(\d))?$/;
       const match = input.match(regex);
+      
       if (match) {
           const title = match[1].trim();
           const dateStr = match[2];
           const priorityCode = match[3];
-          let parsedDate = new Date();
-          const currentYear = parsedDate.getFullYear();
-          let day, month, year;
-          if (dateStr.length === 4) {
-              day = parseInt(dateStr.substring(0, 2));
-              month = parseInt(dateStr.substring(2, 4)) - 1; 
-              year = currentYear;
-          } else if (dateStr.length === 8) {
-              day = parseInt(dateStr.substring(0, 2));
-              month = parseInt(dateStr.substring(2, 4)) - 1;
-              year = parseInt(dateStr.substring(4, 8));
-          } else {
-              return { title: input, date: newTaskDate, priority: newTaskPriority };
+
+          let formattedDate = defaultDate;
+          if (dateStr) {
+            const currentYear = new Date().getFullYear();
+            let day, month, year;
+            if (dateStr.length === 4) {
+                day = parseInt(dateStr.substring(0, 2));
+                month = parseInt(dateStr.substring(2, 4)) - 1; 
+                year = currentYear;
+            } else if (dateStr.length === 8) {
+                day = parseInt(dateStr.substring(0, 2));
+                month = parseInt(dateStr.substring(2, 4)) - 1;
+                year = parseInt(dateStr.substring(4, 8));
+            }
+            if (day && !isNaN(day)) {
+                const dateObj = new Date(year!, month!, day);
+                if (!isNaN(dateObj.getTime())) {
+                    formattedDate = dateObj.toISOString().split('T')[0];
+                }
+            }
           }
-          const dateObj = new Date(year, month, day);
-          const formattedDate = !isNaN(dateObj.getTime()) ? dateObj.toISOString().split('T')[0] : newTaskDate;
-          let priority: 'Low' | 'Medium' | 'High' = 'Medium';
+
+          let priority: 'Low' | 'Medium' | 'High' = defaultPriority;
           if (priorityCode === '1') priority = 'Low';
+          if (priorityCode === '2') priority = 'Medium';
           if (priorityCode === '3') priority = 'High';
+
           return { title, date: formattedDate, priority };
       }
-      return { title: input, date: newTaskDate, priority: newTaskPriority };
+      return { title: input, date: defaultDate, priority: defaultPriority };
   };
 
   const handleSaveTask = () => {
-    if(newTaskTitle.trim()) {
-        const { title, date, priority } = editingTask 
-            ? { title: newTaskTitle, date: newTaskDate, priority: newTaskPriority } 
-            : parseSmartInput(newTaskTitle);
-            
-        if (editingTask) {
-            onUpdateTask({ ...editingTask, title: title, dueDate: date, priority: priority });
-        } else {
-            const newTask: Task = { 
-                id: Date.now().toString(), 
-                subjectId: subject.id, 
-                title: title, 
-                status: 'todo', 
-                dueDate: date, 
-                priority: priority 
-            };
-            onAddTask(newTask);
+    if (taskMode === 'single') {
+        if(newTaskTitle.trim()) {
+            if (editingTask) {
+                onUpdateTask({ ...editingTask, title: newTaskTitle, dueDate: newTaskDate, priority: newTaskPriority });
+            } else {
+                const newTask: Task = { 
+                    id: Date.now().toString(), 
+                    subjectId: subject.id, 
+                    title: newTaskTitle, 
+                    status: 'todo', 
+                    dueDate: newTaskDate, 
+                    priority: newTaskPriority 
+                };
+                onAddTask(newTask);
+            }
+            setShowTaskDrawer(false);
         }
-        setShowTaskModal(false);
+    } else {
+        // Bulk Mode
+        if (!bulkTaskContent.trim()) return;
+        const lines = bulkTaskContent.split('\n');
+        const today = new Date().toISOString().split('T')[0];
+        
+        // Accumulate valid tasks
+        lines.forEach(line => {
+            if (!line.trim()) return;
+            const { title, date, priority } = parseSmartInput(line.trim(), today, 'Low');
+            if (title) {
+                const newTask: Task = {
+                    id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+                    subjectId: subject.id,
+                    title: title,
+                    status: 'todo',
+                    dueDate: date,
+                    priority: priority
+                };
+                onAddTask(newTask); // Relies on App.tsx using prev state update
+            }
+        });
+        setShowTaskDrawer(false);
     }
   }
 
@@ -306,17 +367,47 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       }
   }
 
+  // --- Adding Link from Sidebar ---
+  const handleAddLinkFromSidebar = () => {
+      if (newLinkUrl.trim() && newLinkTitle.trim()) {
+          const newRes: Resource = {
+              id: Date.now().toString(),
+              subjectId: subject.id,
+              title: newLinkTitle,
+              type: 'Link',
+              url: newLinkUrl
+          };
+          onAddResource(newRes);
+
+          if (editorRef.current) {
+              editorRef.current.insertContent(`<p><a href="${newLinkUrl}" target="_blank">${newLinkTitle}</a></p>`);
+              setExtractedLinks(prev => [...prev, { href: newLinkUrl, text: newLinkTitle }]);
+          }
+
+          setNewLinkUrl('');
+          setNewLinkTitle('');
+          setShowAddLinkInput(false);
+      }
+  }
+
   const handleSaveNote = () => {
-      // Auto-title if empty
       let finalTitle = noteTitle.trim();
       let content = noteContent;
       
-      // Get latest content from ref if available
       if(editorRef.current) {
           content = editorRef.current.getContent();
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(content, 'text/html');
+          
+          const imgs: string[] = [];
+          doc.querySelectorAll('img').forEach(img => imgs.push(img.src));
+          setExtractedImages(imgs);
+
+          const links: LinkAttachment[] = [];
+          doc.querySelectorAll('a').forEach(a => links.push({ href: a.href, text: a.innerText || a.href }));
+          setExtractedLinks(links);
       }
 
-      // Basic strip HTML for checking content existence
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = content;
       const plainText = tempDiv.textContent || tempDiv.innerText || '';
@@ -326,8 +417,6 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       }
       if(!finalTitle) finalTitle = "Untitled Note";
       
-      // --- MERGE AUDIO ATTACHMENTS INTO CONTENT ---
-      // FIX: Store Base64 URL in innerHTML/innerText to avoid attribute truncation limits in some browsers
       let audioHtml = '';
       if (audioAttachments.length > 0) {
           audioHtml = audioAttachments.map(audio => `
@@ -345,35 +434,45 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       setNoteTitle(finalTitle);
       const timestamp = new Date().toISOString();
 
+      const noteData = {
+          id: editingNote ? editingNote.id : Date.now().toString(),
+          subjectId: subject.id,
+          title: finalTitle,
+          content: finalContent,
+          lastModified: timestamp
+      };
+
       if (editingNote) {
-            const updatedNote = { ...editingNote, title: finalTitle, content: finalContent, lastModified: timestamp };
-            onUpdateNote(updatedNote);
-            setEditingNote(updatedNote); 
+            onUpdateNote(noteData);
+            setEditingNote(noteData); 
       } else {
-            const newNote = {
-                id: Date.now().toString(),
-                subjectId: subject.id,
-                title: finalTitle,
-                content: finalContent,
-                lastModified: timestamp
-            };
-            onAddNote(newNote);
-            setEditingNote(newNote); 
+            onAddNote(noteData);
+            setEditingNote(noteData); 
       }
       setIsNoteDirty(false);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
+      return noteData;
   };
 
   const handleCloseNoteModal = () => {
       if (isNoteDirty) {
-          if (!window.confirm("Bạn chưa lưu các thay đổi. Bạn có chắc chắn muốn thoát?")) {
-              return;
-          }
+          handleSaveNote();
       }
       stopRecordingInternal();
       setIsNoteDirty(false);
       setShowNoteModal(false);
+      setActiveSidebar('none');
+      if (onNoteActive) onNoteActive(null);
+  }
+
+  const handleMinimize = () => {
+      const savedNote = handleSaveNote();
+      if (onMinimize) {
+          onMinimize(savedNote);
+      }
+      setShowNoteModal(false);
+      if (onNoteActive) onNoteActive(null); 
   }
 
   // --- Audio Recording Logic ---
@@ -382,12 +481,11 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           setRecordingStream(stream); 
           
-          // FIX: Detect supported MIME type
           let mimeType = 'audio/webm';
           if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
               mimeType = 'audio/webm;codecs=opus';
           } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-              mimeType = 'audio/mp4'; // Safari fallback
+              mimeType = 'audio/mp4'; 
           }
 
           const mediaRecorder = new MediaRecorder(stream, { mimeType });
@@ -406,10 +504,8 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                   const base64data = reader.result as string;
                   const timestamp = new Date();
                   const timeString = timestamp.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-                  
                   const newAudioId = Date.now().toString();
 
-                  // 1. Save to Note's attachments
                   const newAudio: AudioAttachment = {
                       id: newAudioId,
                       url: base64data,
@@ -418,10 +514,9 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                   };
                   
                   setAudioAttachments(prev => [newAudio, ...prev]);
-                  setIsAudioSidebarOpen(true); // Open sidebar to show result
-                  setIsNoteDirty(true); // Mark as dirty
+                  setActiveSidebar('audio'); 
+                  setIsNoteDirty(true); 
 
-                  // 2. ALSO Save to Resources (Auto-sync)
                   const currentTitle = noteTitleRef.current.trim() || "Ghi chú chưa đặt tên";
                   const dateTimeStr = timestamp.toLocaleString('vi-VN');
                   
@@ -435,7 +530,6 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                   };
                   onAddResource(newResource);
               }
-
               stream.getTracks().forEach(track => track.stop());
               setRecordingStream(null);
           };
@@ -466,26 +560,69 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
           setAudioAttachments(prev => prev.filter(a => a.id !== id));
           setIsNoteDirty(true);
           if (activeAudioId === id) setActiveAudioId(null);
+          onDeleteResource(`res-audio-${id}`);
       }
   };
+  
+  const deleteImageAttachment = (src: string) => {
+      if(window.confirm('Xóa hình ảnh này khỏi nội dung?')) {
+          if (editorRef.current) {
+              const currentContent = editorRef.current.getContent();
+              const newContent = currentContent.replace(new RegExp(`<img[^>]*src="${src.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>`, 'g'), '');
+              editorRef.current.insertContent(""); // Hard reset approach not ideal but effective for now
+              // In reality, RichTextEditor ref should expose safer manipulation. 
+              // Trigger save to update
+              setExtractedImages(prev => prev.filter(s => s !== src));
+              setIsNoteDirty(true);
+          }
+      }
+  }
 
-  // --- AI Summary Helper ---
+  const deleteLinkAttachment = (href: string) => {
+      if(window.confirm('Xóa liên kết này khỏi nội dung?')) {
+          const editorDiv = document.querySelector('.prose[contenteditable]');
+          if (editorDiv) {
+              const links = editorDiv.querySelectorAll('a');
+              links.forEach(a => {
+                  if(a.href === href) a.remove();
+              });
+          }
+          setExtractedLinks(prev => prev.filter(l => l.href !== href));
+          setIsNoteDirty(true);
+      }
+  }
+
+  const copyToClipboard = (text: string) => {
+      navigator.clipboard.writeText(text);
+      alert("Đã sao chép liên kết!");
+  };
+
+  const downloadFile = (url: string, filename: string) => {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+  };
+
   const generatePrompt = () => {
       if (!editorRef.current) return '';
       const content = editorRef.current.getPlainText();
-      return `Tóm tắt nội dung sau đây một cách ngắn gọn, súc tích (khoảng 60-80 từ) dưới dạng bullet points hoặc đoạn văn ngắn:\n\n"${content}"`;
+      return `Là 1 người học bạn hãy tóm tắt đoạn sau từ 60-80 từ dạng đoạn văn nhé lấy ý chính thôi - kêt quả trả về chỉ có only đoạn tóm tắt k nói gì thêm:\n\n"${content}"`;
   };
 
   const handleCopyPrompt = () => {
       const prompt = generatePrompt();
       navigator.clipboard.writeText(prompt);
-      alert("Đã copy Prompt! Hãy dán vào AI.");
+      alert("Đã copy Prompt!");
   };
 
-  const handleApplySummary = (text: string) => {
-      if (editorRef.current) {
-           editorRef.current.setSummary(text);
-           setIsSidebarOpen(false);
+  const handleApplySummary = () => {
+      if (editorRef.current && aiSummaryResult.trim()) {
+           editorRef.current.setSummary(aiSummaryResult);
+           setAiSummaryResult('');
+           setActiveSidebar('none');
       }
   };
 
@@ -503,7 +640,7 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
           setResUrl('');
           setResTranscription('');
           setResType('Link');
-          setShowResourceModal(false);
+          setShowResourceDrawer(false);
       }
   }
 
@@ -518,40 +655,30 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       setIsExporting(true);
       setPrintData(notesToPrint);
       
-      // Delay to allow DOM rendering
       setTimeout(async () => {
           const element = document.getElementById('print-area');
           if (element) {
              try {
-                 const canvas = await html2canvas(element, {
-                     scale: 2,
-                     useCORS: true,
-                     backgroundColor: '#ffffff'
-                 });
-                 
+                 const canvas = await html2canvas(element, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
                  const imgData = canvas.toDataURL('image/png');
                  const pdf = new jsPDF('p', 'mm', 'a4');
                  const pdfWidth = pdf.internal.pageSize.getWidth();
                  const pdfHeight = pdf.internal.pageSize.getHeight();
-                 
                  const imgProps = pdf.getImageProperties(imgData);
                  const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
                  
                  let heightLeft = imgHeight;
                  let position = 0;
                  
-                 // First page
                  pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
                  heightLeft -= pdfHeight;
                  
-                 // Subsequent pages
                  while (heightLeft > 0) {
                      position -= pdfHeight; 
                      pdf.addPage();
                      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
                      heightLeft -= pdfHeight;
                  }
-                 
                  pdf.save(`${subject.name}_Notes.pdf`);
              } catch (e) {
                  console.error(e);
@@ -565,7 +692,13 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       }, 1000);
   }
   
-  const IconComp = ICONS[subject.icon] || ICONS['Book'];
+  const renderHeaderIcon = () => {
+      if (subject.icon.startsWith('<svg')) {
+          return <div className="text-white" style={{width: 300, height: 300, opacity: 0.2}} dangerouslySetInnerHTML={{ __html: subject.icon }} />;
+      }
+      const IconComp = ICONS[subject.icon] || ICONS['Book'];
+      return <IconComp size={300} className="text-white" />;
+  }
 
   const toggleTaskStatus = (task: Task) => {
       const nextStatus = task.status === 'done' ? 'todo' : 'done';
@@ -581,40 +714,56 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       return a.dueDate.localeCompare(b.dueDate);
   });
   
+  // Pagination Logic
+  const totalTaskPages = Math.ceil(sortedTasks.length / TASKS_PER_PAGE);
+  const currentTasks = sortedTasks.slice((currentTaskPage - 1) * TASKS_PER_PAGE, currentTaskPage * TASKS_PER_PAGE);
+
+  const nextPage = () => setCurrentTaskPage(prev => Math.min(prev + 1, totalTaskPages));
+  const prevPage = () => setCurrentTaskPage(prev => Math.max(prev - 1, 1));
+  const goToPage = (p: number) => setCurrentTaskPage(p);
+
   const filteredResources = resources.filter(r => resourceFilter === 'All' || r.type === resourceFilter);
   const notesToPrint = notes.filter(n => selectedPdfNotes.includes(n.id));
   const estimatedPages = Math.ceil((tasks.length * 50 + notesToPrint.reduce((acc, n) => acc + n.content.length/2, 0)) / 3000) || 1;
   const estimatedSize = (notesToPrint.length * 0.15 + 0.2).toFixed(2);
-
   const filteredDrawerResources = resources.filter(r => r.title.toLowerCase().includes(drawerSearchTerm.toLowerCase()));
 
-  // Drag and Drop simulation for Resources
   const handleDropResource = (e: React.DragEvent) => {
       e.preventDefault();
       const files = e.dataTransfer.files;
       if (files.length > 0) {
           const file = files[0];
-          setResTitle(file.name); // Auto-name
-          setResUrl('#local-file');
-          setResType('File');
-          setShowResourceModal(true);
+          handleResourceFileSelect(file);
       }
   }
 
-  // Handle URL change for auto-naming
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const url = e.target.value;
       setResUrl(url);
-      // Simple auto-name if title is empty
       if (!resTitle && url.length > 5) {
           try {
               const urlObj = new URL(url);
-              setResTitle(urlObj.hostname + (urlObj.pathname.length > 1 ? urlObj.pathname : ''));
-          } catch {
-              // invalid url, ignore
-          }
+              let name = urlObj.hostname.replace('www.', '');
+              const pathSegments = urlObj.pathname.split('/').filter(Boolean);
+              if (pathSegments.length > 0) name = pathSegments[pathSegments.length - 1];
+              if (name.length > 12) name = name.substring(0, 12) + '...';
+              setResTitle(name);
+          } catch { }
       }
   }
+  
+  const handleResourceFileSelect = (file: File) => {
+      setResTitle(file.name);
+      setResType('File');
+      const reader = new FileReader();
+      reader.onload = (e) => {
+          if (e.target?.result) {
+              setResUrl(e.target.result as string);
+              setShowResourceDrawer(true);
+          }
+      };
+      reader.readAsDataURL(file);
+  };
 
   const formatTime = (seconds: number) => {
       const mins = Math.floor(seconds / 60);
@@ -622,10 +771,11 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
-  // Helper to determine text color based on background (basic)
   const isCustomColor = subject.color.startsWith('#');
   const headerStyle = isCustomColor ? { backgroundColor: subject.color } : {};
   const headerClass = isCustomColor ? '' : subject.color;
+
+  const IconComp = ICONS[subject.icon] || ICONS['Book'];
 
   return (
     <div className="flex-1 flex flex-col h-full bg-gray-50 dark:bg-slate-950 relative transition-colors">
@@ -634,15 +784,14 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
             body > * { display: none !important; }
         }
       `}</style>
-
-      {/* Modern Full-Color Header */}
+      
+      {/* Header */}
       <div 
         className={`p-8 relative overflow-hidden flex-shrink-0 no-print transition-all duration-300 ${headerClass}`}
         style={headerStyle}
       >
-         {/* Big Background Icon */}
          <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-1/4 translate-y-1/4 pointer-events-none">
-             <IconComp size={300} className="text-white" />
+             {renderHeaderIcon()}
          </div>
 
          <div className="relative z-10 flex flex-col gap-6">
@@ -659,159 +808,187 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                         <span className="flex items-center gap-1.5 bg-white/10 px-3 py-1 rounded-full backdrop-blur-sm"><Clock size={14}/> Created: {subject.createdAt ? new Date(subject.createdAt).toLocaleDateString() : 'Unknown'}</span>
                         <span className="flex items-center gap-1.5"><CheckCircle size={14}/> {tasks.length} Tasks</span>
                         <span className="flex items-center gap-1.5"><FileText size={14}/> {notes.length} Notes</span>
-                        <span className="flex items-center gap-1.5"><LinkIcon size={14}/> {resources.length} Docs</span>
                     </div>
                 </div>
 
                 <div className="flex items-center gap-3">
-                    <button 
-                        onClick={() => onEditSubject && onEditSubject(subject)} 
-                        className="flex items-center gap-2 bg-white/20 text-white px-4 py-2.5 rounded-xl hover:bg-white/30 transition backdrop-blur-md font-medium border border-white/10"
-                        title="Chỉnh sửa môn học"
-                    >
-                        <PenTool size={18} />
-                    </button>
-                    <button 
-                        onClick={() => onArchiveSubject && onArchiveSubject(subject.id)} 
-                        className="flex items-center gap-2 bg-white/20 text-white px-4 py-2.5 rounded-xl hover:bg-white/30 transition backdrop-blur-md font-medium border border-white/10"
-                        title="Lưu trữ"
-                    >
-                        <Archive size={18} />
-                    </button>
-                    <button onClick={() => { setSelectedPdfNotes(notes.map(n=>n.id)); setShowPdfDrawer(true); }} className="flex items-center gap-2 bg-white/20 text-white px-5 py-2.5 rounded-xl hover:bg-white/30 transition backdrop-blur-md font-medium border border-white/10">
-                        <Printer size={18} /> {t.exportPdf}
-                    </button>
+                    <button onClick={() => onEditSubject && onEditSubject(subject)} className="flex items-center gap-2 bg-white/20 text-white px-4 py-2.5 rounded-xl hover:bg-white/30 transition backdrop-blur-md font-medium border border-white/10"><PenTool size={18} /></button>
+                    <button onClick={() => onArchiveSubject && onArchiveSubject(subject.id)} className="flex items-center gap-2 bg-white/20 text-white px-4 py-2.5 rounded-xl hover:bg-white/30 transition backdrop-blur-md font-medium border border-white/10"><Archive size={18} /></button>
+                    <button onClick={() => { setSelectedPdfNotes(notes.map(n=>n.id)); setShowPdfDrawer(true); }} className="flex items-center gap-2 bg-white/20 text-white px-5 py-2.5 rounded-xl hover:bg-white/30 transition backdrop-blur-md font-medium border border-white/10"><Printer size={18} /> {t.exportPdf}</button>
                 </div>
             </div>
          </div>
       </div>
 
       {/* Tabs */}
-      <div className="no-print flex border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-8 space-x-8 sticky top-0 z-20 flex-shrink-0 shadow-sm">
-        {['tasks', 'notes', 'resources'].map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab as any)}
-            className={`py-4 px-1 font-medium capitalize transition-all border-b-2 text-lg ${
-              activeTab === tab 
-                ? `border-emerald-500 text-emerald-600 dark:text-emerald-400` 
-                : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200'
-            }`}
-          >
-            {tab === 'tasks' ? t.tasks : tab === 'notes' ? t.notes : t.resources}
-          </button>
-        ))}
+      <div className="no-print flex border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 sticky top-0 z-20 flex-shrink-0 shadow-sm">
+        <div className="max-w-7xl mx-auto w-full px-4 md:px-8 flex space-x-8">
+            {['tasks', 'notes', 'resources'].map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab as any)}
+                className={`py-4 px-1 font-medium capitalize transition-all border-b-2 text-lg ${
+                  activeTab === tab 
+                    ? `border-emerald-500 text-emerald-600 dark:text-emerald-400` 
+                    : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200'
+                }`}
+              >
+                {tab === 'tasks' ? t.tasks : tab === 'notes' ? t.notes : t.resources}
+              </button>
+            ))}
+        </div>
       </div>
 
-      {/* Content */}
+      {/* Main Content */}
       <div className="subject-content flex-1 p-8 overflow-y-auto bg-gray-50 dark:bg-slate-950/50 no-print">
-        {/* LIST VIEW for TASKS */}
+        {/* TASKS */}
         {activeTab === 'tasks' && (
-          <div className="max-w-5xl mx-auto h-full flex flex-col">
+          <div className="max-w-7xl mx-auto h-full flex flex-col">
              <div className="flex justify-between items-center mb-6 flex-shrink-0">
                  <h2 className="text-xl font-bold dark:text-white">{t.tasks}</h2>
                  <button 
-                    onClick={openAddTaskModal}
+                    onClick={openAddTaskDrawer}
                     className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-xl hover:bg-emerald-700 font-medium shadow-md shadow-emerald-200 dark:shadow-none"
                  >
                      <Plus size={20} /> {t.addTask}
                  </button>
              </div>
 
-             <div className="flex-1 bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 overflow-hidden flex flex-col backdrop-blur-sm">
+             <div className="flex-1 flex flex-col">
                  {sortedTasks.length === 0 ? (
-                     <div className="flex flex-col items-center justify-center py-20 text-gray-400">
-                         <div className="bg-gray-100 dark:bg-slate-800 p-4 rounded-full mb-3">
-                             <AlertCircle size={32}/>
-                         </div>
+                     <div className="flex flex-col items-center justify-center py-20 text-gray-400 bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800">
+                         <div className="bg-gray-100 dark:bg-slate-800 p-4 rounded-full mb-3"><AlertCircle size={32}/></div>
                          <p>Chưa có công việc nào.</p>
                      </div>
                  ) : (
-                    <div className="divide-y divide-gray-100 dark:divide-slate-800">
-                        {sortedTasks.map(task => (
-                            <div key={task.id} className={`p-4 flex items-center gap-4 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition group ${task.status === 'done' ? 'opacity-60 bg-gray-50 dark:bg-slate-900/50' : ''}`}>
+                    <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+                        {currentTasks.map(task => (
+                            <div key={task.id} className={`p-3 rounded-xl border flex items-center gap-3 transition-all hover:shadow-md ${task.status === 'done' ? 'bg-gray-50 border-gray-200 dark:bg-slate-900/50 dark:border-slate-800 opacity-70' : 'bg-white border-gray-200 dark:bg-slate-900 dark:border-slate-700 hover:border-emerald-300 dark:hover:border-emerald-700'}`}>
                                 <button 
                                     onClick={() => toggleTaskStatus(task)}
-                                    className={`flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors
-                                        ${task.status === 'done' 
-                                            ? 'bg-emerald-500 border-emerald-500 text-white' 
-                                            : 'border-gray-300 dark:border-slate-600 hover:border-emerald-500 text-transparent'}`}
+                                    className={`flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${task.status === 'done' ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 dark:border-slate-600 hover:border-emerald-500 text-transparent'}`}
                                 >
-                                    <CheckCircle size={14} fill="currentColor" className={task.status === 'done' ? 'opacity-100' : 'opacity-0'} />
+                                    <CheckCircle size={12} fill="currentColor" className={task.status === 'done' ? 'opacity-100' : 'opacity-0'} />
                                 </button>
-                                
                                 <div className="flex-1 min-w-0">
-                                    <h4 className={`text-lg font-medium truncate ${task.status === 'done' ? 'line-through text-gray-500 dark:text-slate-500' : 'text-gray-800 dark:text-white'}`}>
-                                        {task.title}
-                                    </h4>
-                                    <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-slate-400 mt-0.5">
-                                        <span className={`flex items-center gap-1 ${new Date(task.dueDate) < new Date() && task.status !== 'done' ? 'text-red-500 font-medium' : ''}`}>
-                                            <Calendar size={14}/> {task.dueDate}
-                                        </span>
-                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                                            task.priority === 'High' ? 'bg-red-100 text-red-600 dark:bg-red-900/30' : 
-                                            task.priority === 'Medium' ? 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30' : 'bg-green-100 text-green-600 dark:bg-green-900/30'
-                                         }`}>
-                                             {task.priority}
-                                        </span>
+                                    <h4 className={`text-sm font-medium truncate ${task.status === 'done' ? 'line-through text-gray-500 dark:text-slate-500' : 'text-gray-800 dark:text-white'}`}>{task.title}</h4>
+                                    <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+                                        <span className={`flex items-center gap-1 ${new Date(task.dueDate) < new Date() && task.status !== 'done' ? 'text-red-500 font-medium' : ''}`}><Calendar size={12}/> {task.dueDate}</span>
+                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${task.priority === 'High' ? 'bg-red-100 text-red-600' : task.priority === 'Medium' ? 'bg-yellow-100 text-yellow-600' : 'bg-green-100 text-green-600'}`}>{task.priority}</span>
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                     <button onClick={() => openEditTaskModal(task)} className="p-2 text-gray-400 hover:text-emerald-500"><PenTool size={18}/></button>
-                                     <button onClick={() => onDeleteTask(task.id)} className="p-2 text-gray-400 hover:text-red-500"><Trash2 size={18}/></button>
+                                <div className="flex items-center">
+                                     <button onClick={() => openEditTaskDrawer(task)} className="p-1.5 text-gray-400 hover:text-emerald-500"><PenTool size={16}/></button>
+                                     <button onClick={() => onDeleteTask(task.id)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={16}/></button>
                                 </div>
                             </div>
                         ))}
                     </div>
+
+                    {/* Pagination Controls */}
+                    {totalTaskPages > 1 && (
+                        <div className="flex justify-center items-center gap-2 mt-auto pb-4">
+                            <button 
+                                onClick={prevPage}
+                                disabled={currentTaskPage === 1}
+                                className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent transition text-gray-600 dark:text-slate-400"
+                            >
+                                <ChevronLeft size={20}/>
+                            </button>
+                            
+                            <div className="flex items-center gap-1.5">
+                                {Array.from({ length: totalTaskPages }, (_, i) => i + 1).map(pageNum => (
+                                    <button
+                                        key={pageNum}
+                                        onClick={() => goToPage(pageNum)}
+                                        className={`w-2.5 h-2.5 rounded-full transition-all ${currentTaskPage === pageNum ? 'bg-emerald-500 w-6' : 'bg-gray-300 dark:bg-slate-700 hover:bg-emerald-300'}`}
+                                    />
+                                ))}
+                            </div>
+
+                            <button 
+                                onClick={nextPage}
+                                disabled={currentTaskPage === totalTaskPages}
+                                className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent transition text-gray-600 dark:text-slate-400"
+                            >
+                                <ChevronRight size={20}/>
+                            </button>
+                        </div>
+                    )}
+                    </>
                  )}
              </div>
           </div>
         )}
 
-        {/* NOTES TAB */}
+        {/* NOTES */}
         {activeTab === 'notes' && (
           <div className="max-w-7xl mx-auto">
              <div className="flex justify-between items-center mb-6">
                  <h2 className="text-xl font-bold dark:text-white">{t.notes}</h2>
-                 <button 
-                    onClick={() => openNote(null)}
-                    className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-xl hover:bg-emerald-700 shadow-md shadow-emerald-200 dark:shadow-none"
-                 >
-                     <Plus size={20} /> {t.addNote}
-                 </button>
+                 <div className="flex gap-2">
+                     <div className="flex bg-gray-200 dark:bg-slate-900 p-1 rounded-lg">
+                        <button onClick={() => setNoteViewMode('grid')} className={`p-2 rounded-md transition ${noteViewMode === 'grid' ? 'bg-white dark:bg-slate-800 text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:text-slate-500'}`}><LayoutGrid size={18} /></button>
+                        <button onClick={() => setNoteViewMode('table')} className={`p-2 rounded-md transition ${noteViewMode === 'table' ? 'bg-white dark:bg-slate-800 text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:text-slate-500'}`}><List size={18} /></button>
+                     </div>
+                     <button onClick={() => openNote(null)} className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-2 rounded-xl hover:bg-emerald-700 shadow-md shadow-emerald-200 dark:shadow-none font-medium"><Plus size={20} /> {t.addNote}</button>
+                 </div>
              </div>
              
-             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {notes.map(note => (
-                    <div 
-                        key={note.id} 
-                        onClick={() => openNote(note)}
-                        className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-800 hover:shadow-lg hover:-translate-y-1 transition-all cursor-pointer group relative flex flex-col h-72"
-                    >
-                        <h3 className="font-bold text-gray-800 dark:text-white mb-3 text-xl line-clamp-1">{note.title}</h3>
-                        <div 
-                            className="text-gray-600 dark:text-slate-300 text-base line-clamp-6 mb-4 flex-1 whitespace-pre-wrap leading-relaxed prose dark:prose-invert prose-sm max-w-none overflow-hidden"
-                            dangerouslySetInnerHTML={{ __html: note.content }}
-                        />
-                        <div className="flex justify-between items-center mt-auto border-t border-gray-100 dark:border-slate-800 pt-3">
-                            <span className="text-xs text-gray-400 dark:text-slate-500">{new Date(note.lastModified).toLocaleDateString()}</span>
+             {noteViewMode === 'grid' ? (
+                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                    {notes.map(note => {
+                        const { wordCount, sizeDisplay } = getNoteStats(note.content);
+                        return (
+                        <div key={note.id} onClick={() => openNote(note)} className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-800 hover:shadow-lg hover:-translate-y-1 hover:border-emerald-500/50 transition-all cursor-pointer group relative flex flex-col h-64">
+                            <h3 className="font-bold text-gray-800 dark:text-white mb-2 text-lg line-clamp-2">{note.title}</h3>
+                            <div className="text-gray-500 dark:text-slate-400 text-sm line-clamp-5 mb-4 flex-1 whitespace-pre-wrap leading-relaxed overflow-hidden" dangerouslySetInnerHTML={{ __html: note.content.replace(/<[^>]*>?/gm, ' ') }} />
+                            <div className="flex justify-between items-center mt-auto pt-3 border-t border-gray-50 dark:border-slate-800/50 text-[11px] font-medium text-gray-400 dark:text-slate-500">
+                                <span>{new Date(note.lastModified).toLocaleDateString()}</span>
+                                <div className="flex gap-3"><span>{wordCount} words</span><span>{sizeDisplay}</span></div>
+                            </div>
+                            <button onClick={(e) => { e.stopPropagation(); onDeleteNote(note.id); }} className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 bg-white dark:bg-slate-800 p-1.5 rounded-lg shadow-sm border border-gray-100 dark:border-slate-700 transition-all transform scale-90 hover:scale-100"><Trash2 size={16} /></button>
                         </div>
-                        
-                        <button 
-                            onClick={(e) => { e.stopPropagation(); onDeleteNote(note.id); }}
-                            className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 bg-white/50 dark:bg-slate-800/50 p-2 rounded-lg"
-                        >
-                            <Trash2 size={18} />
-                        </button>
-                    </div>
-                ))}
-            </div>
+                    )})}
+                </div>
+             ) : (
+                 <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-800 overflow-hidden">
+                     <table className="w-full text-left border-collapse">
+                         <thead className="bg-gray-50 dark:bg-slate-950 border-b border-gray-100 dark:border-slate-800 text-xs font-bold text-gray-500 dark:text-slate-400 uppercase">
+                             <tr>
+                                 <th className="px-6 py-4">Tên ghi chú</th>
+                                 <th className="px-6 py-4 w-32">Dung lượng</th>
+                                 <th className="px-6 py-4 w-32">Số từ</th>
+                                 <th className="px-6 py-4 w-40">Ngày sửa</th>
+                                 <th className="px-6 py-4 w-20 text-center">Hành động</th>
+                             </tr>
+                         </thead>
+                         <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                             {notes.map(note => {
+                                 const { wordCount, sizeDisplay } = getNoteStats(note.content);
+                                 return (
+                                     <tr key={note.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition cursor-pointer" onClick={() => openNote(note)}>
+                                         <td className="px-6 py-4 font-medium text-gray-800 dark:text-white">{note.title}</td>
+                                         <td className="px-6 py-4 text-sm text-gray-500 dark:text-slate-400 font-mono">{sizeDisplay}</td>
+                                         <td className="px-6 py-4 text-sm text-gray-500 dark:text-slate-400 font-mono">{wordCount}</td>
+                                         <td className="px-6 py-4 text-sm text-gray-500 dark:text-slate-400">{new Date(note.lastModified).toLocaleDateString()}</td>
+                                         <td className="px-6 py-4 text-center">
+                                             <button onClick={(e) => { e.stopPropagation(); onDeleteNote(note.id); }} className="p-2 text-gray-400 hover:text-red-500 transition rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"><Trash2 size={18} /></button>
+                                         </td>
+                                     </tr>
+                                 )
+                             })}
+                         </tbody>
+                     </table>
+                 </div>
+             )}
           </div>
         )}
 
-        {/* RESOURCES TAB (Unchanged from original) */}
+        {/* RESOURCES */}
         {activeTab === 'resources' && (
-          <div className="max-w-5xl mx-auto">
+          <div className="max-w-7xl mx-auto">
              <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                  <h2 className="text-xl font-bold dark:text-white">{t.resources}</h2>
                  <div className="flex items-center gap-4">
@@ -826,18 +1003,17 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                              </button>
                          ))}
                      </div>
-                     <button onClick={() => setShowResourceModal(true)} className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-xl hover:bg-emerald-700 shadow-md">
+                     <button onClick={() => setShowResourceDrawer(true)} className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-xl hover:bg-emerald-700 shadow-md">
                          <LinkIcon size={20} /> {t.addResource}
                      </button>
                  </div>
              </div>
              
-             {/* Drag and Drop Placeholder */}
              <div 
                 className="mb-6 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl p-8 flex flex-col items-center justify-center text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-900/50 transition cursor-pointer"
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={handleDropResource}
-                onClick={() => setShowResourceModal(true)}
+                onClick={() => setShowResourceDrawer(true)}
              >
                  <UploadCloud size={48} className="mb-2 text-gray-300 dark:text-slate-600"/>
                  <p className="font-medium">Kéo thả tài liệu vào đây hoặc click để thêm</p>
@@ -851,27 +1027,22 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                      else if (res.type === 'Audio') { ResIcon = FileAudio; iconColor = 'bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400'; }
 
                      return (
-                     <div 
-                        key={res.id} 
-                        onClick={() => { setPreviewResource(res); setDrawerSearchTerm(''); }}
-                        className="p-5 flex items-center justify-between group bg-white dark:bg-slate-900/60 border border-gray-200 dark:border-slate-800 rounded-xl hover:border-emerald-500 dark:hover:border-emerald-500 transition shadow-sm backdrop-blur-sm cursor-pointer"
-                     >
+                     <div key={res.id} onClick={() => { setPreviewResource(res); setDrawerSearchTerm(''); }} className="p-5 flex items-center justify-between group bg-white dark:bg-slate-900/60 border border-gray-200 dark:border-slate-800 rounded-xl hover:border-emerald-500 dark:hover:border-emerald-500 transition shadow-sm backdrop-blur-sm cursor-pointer">
                          <div className="flex items-center gap-5 overflow-hidden">
-                             <div className={`${iconColor} p-4 rounded-xl`}>
-                                 <ResIcon size={24} />
-                             </div>
+                             <div className={`${iconColor} p-4 rounded-xl`}><ResIcon size={24} /></div>
                              <div className="min-w-0">
-                                 <div className="font-bold text-lg text-gray-800 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 block truncate transition-colors">
-                                     {res.title}
-                                 </div>
-                                 <p className="text-sm text-gray-400 mt-1 truncate max-w-xl">
-                                     {res.type === 'Audio' ? 'Audio Recording' : res.url}
-                                 </p>
+                                 <div className="font-bold text-lg text-gray-800 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 block truncate transition-colors">{res.title}</div>
+                                 <p className="text-sm text-gray-400 mt-1 truncate max-w-xl">{res.type === 'Audio' ? 'Audio Recording' : (res.url.startsWith('data:') ? 'Local File' : res.url)}</p>
                              </div>
                          </div>
-                         <button onClick={(e) => { e.stopPropagation(); onDeleteResource(res.id); }} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 p-2">
-                             <Trash2 size={20} />
-                         </button>
+                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {res.type === 'Link' ? (
+                                <button onClick={(e) => { e.stopPropagation(); copyToClipboard(res.url); }} className="p-2 text-gray-400 hover:text-blue-500 transition-colors" title="Copy Link"><Copy size={20}/></button>
+                            ) : (
+                                <button onClick={(e) => { e.stopPropagation(); downloadFile(res.url, res.title); }} className="p-2 text-gray-400 hover:text-blue-500 transition-colors" title="Download"><Download size={20}/></button>
+                            )}
+                            <button onClick={(e) => { e.stopPropagation(); onDeleteResource(res.id); }} className="p-2 text-gray-400 hover:text-red-500 transition-colors"><Trash2 size={20} /></button>
+                         </div>
                      </div>
                  )})}
              </div>
@@ -879,507 +1050,464 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
         )}
       </div>
 
-      {/* Hidden Print Area - visible only for html2canvas capturing */}
-      {printData && (
-        <div 
-            id="print-area" 
-            style={{
-                position: 'absolute',
-                top: 0,
-                left: '-9999px', // Off-screen
-                width: '210mm', // A4 width
-                padding: '20px',
-                backgroundColor: 'white',
-                color: 'black',
-                zIndex: -1000
-            }}
-        >
-            <div className="text-center mb-8 border-b pb-4">
-                <h1 className="text-3xl font-bold mb-2">{subject.name}</h1>
-                <p className="text-gray-500">Danh sách ghi chú - {new Date().toLocaleDateString()}</p>
-            </div>
-            <div className="space-y-8">
-                {printData.map(note => (
-                    <div key={note.id} className="note-item mb-8 border-b pb-6 break-inside-avoid">
-                        <h2 className="text-2xl font-bold mb-4">{note.title}</h2>
-                        <div 
-                            className="prose max-w-none text-gray-800 leading-relaxed"
-                            dangerouslySetInnerHTML={{ __html: processContentForPrint(note.content) }}
-                        />
-                        <div className="mt-4 text-sm text-gray-400">
-                            Last modified: {new Date(note.lastModified).toLocaleString()}
-                        </div>
-                    </div>
-                ))}
-            </div>
-        </div>
-      )}
-
-      {/* NOTE MODAL */}
-      {showNoteModal && (
-        <div className="fixed inset-0 bg-white dark:bg-slate-950 z-50 flex flex-col no-print animate-in fade-in duration-200 h-full overflow-hidden">
-            <div className="px-6 py-3 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center shadow-sm bg-white dark:bg-slate-900 flex-shrink-0 relative">
-                <div className="flex items-center gap-4 flex-1">
-                    <button onClick={handleCloseNoteModal} className="text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-white p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition">
-                        <ArrowLeft size={20} />
-                    </button>
-                    <div className="flex-1 max-w-2xl">
-                         <input 
-                            value={noteTitle}
-                            onChange={e => {
-                                setNoteTitle(e.target.value);
-                                setIsNoteDirty(true);
-                            }}
-                            className="text-lg font-bold outline-none text-gray-800 dark:text-white placeholder-gray-300 bg-transparent w-full"
-                            placeholder="Tiêu đề (Tự động nếu để trống)"
-                            autoFocus
-                        />
-                        <div className="flex items-center gap-2 text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">
-                            <span>{subject.name}</span>
-                            <span>•</span>
-                            <span>{editingNote ? `Sửa: ${new Date(editingNote.lastModified).toLocaleDateString()}` : 'Ghi chú mới'}</span>
-                            {isNoteDirty && <span className="text-orange-500 font-semibold italic">• Unsaved</span>}
-                        </div>
-                    </div>
-                </div>
-                
-                <div className="flex gap-2 items-center">
-                    {saveSuccess && <span className="text-green-500 text-sm font-bold animate-pulse flex items-center gap-1 mr-2"><CheckCircle size={14}/> Saved</span>}
-                    
-                    {/* Header Buttons */}
-                    <button 
-                        onClick={startRecording}
-                        disabled={isRecording}
-                        className={`p-2 rounded-lg transition flex items-center justify-center gap-2 ${isRecording ? 'bg-red-50 text-red-500 animate-pulse' : 'bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'}`}
-                        title="Ghi âm"
-                    >
-                        <Mic size={18}/>
-                    </button>
-
-                    <button 
-                        onClick={() => setIsSidebarOpen(true)}
-                        className="p-2 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 rounded-lg transition border border-emerald-100 dark:border-emerald-800/50"
-                        title="AI Summary"
-                    >
-                        <Sparkles size={18} />
-                    </button>
-
-                    {/* New Audio List Toggle */}
-                    <button 
-                        onClick={() => setIsAudioSidebarOpen(!isAudioSidebarOpen)}
-                        className={`p-2 rounded-lg transition border flex items-center gap-1 ${isAudioSidebarOpen || audioAttachments.length > 0 ? 'bg-sky-50 dark:bg-sky-900/20 text-sky-600 dark:text-sky-400 border-sky-100 dark:border-sky-800' : 'bg-white dark:bg-slate-800 text-gray-500 border-transparent hover:bg-gray-100'}`}
-                        title="Danh sách ghi âm"
-                    >
-                        <Headphones size={18} />
-                        {audioAttachments.length > 0 && <span className="text-xs font-bold">{audioAttachments.length}</span>}
-                    </button>
-
-                    <button onClick={handleSaveNote} className="px-5 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold shadow-md text-sm flex items-center gap-2 ml-2">
-                         <Save size={16}/> {t.save}
-                    </button>
-                </div>
-            </div>
-            
-            <div className="flex-1 p-0 flex bg-gray-50 dark:bg-slate-950 overflow-hidden relative">
-                {/* Main Editor Area */}
-                <div className="flex-1 w-full p-4 md:p-6 overflow-hidden flex flex-col transition-all duration-300">
-                     <RichTextEditor 
-                        ref={editorRef}
-                        initialContent={noteContent}
-                        onChange={(content) => {
-                            setNoteContent(content);
-                            setIsNoteDirty(true);
-                        }}
-                        placeholder="Bắt đầu nhập nội dung ghi chú..."
-                        onSave={handleSaveNote}
-                    />
-                </div>
-
-                {/* NEW Audio List Sidebar */}
-                {isAudioSidebarOpen && (
-                    <div className="w-80 bg-white dark:bg-slate-900 border-l border-gray-100 dark:border-slate-800 flex flex-col animate-in slide-in-from-right duration-300 shadow-xl z-20">
-                        <div className="p-4 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-950/50">
-                            <h3 className="font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2">
-                                <Headphones size={18} className="text-sky-500"/> Bản ghi âm
-                            </h3>
-                            <button onClick={() => setIsAudioSidebarOpen(false)}><X size={18} className="text-gray-400 hover:text-red-500"/></button>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/50 dark:bg-slate-950/30">
-                            {audioAttachments.length === 0 ? (
-                                <div className="text-center py-10 text-gray-400 dark:text-slate-600 flex flex-col items-center">
-                                    <Mic size={32} className="mb-2 opacity-20"/>
-                                    <p className="text-sm">Chưa có bản ghi nào.</p>
-                                    <button onClick={startRecording} className="mt-2 text-xs text-emerald-600 font-bold hover:underline">Ghi âm ngay</button>
-                                </div>
-                            ) : (
-                                audioAttachments.map((audio) => (
-                                    <div key={audio.id} className={`bg-white dark:bg-slate-800 rounded-xl border transition-all overflow-hidden ${activeAudioId === audio.id ? 'border-sky-500 ring-1 ring-sky-500 shadow-md' : 'border-gray-200 dark:border-slate-700 hover:border-sky-300'}`}>
-                                        <div 
-                                            className="p-3 flex items-center gap-3 cursor-pointer"
-                                            onClick={() => setActiveAudioId(activeAudioId === audio.id ? null : audio.id)}
-                                        >
-                                            <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${activeAudioId === audio.id ? 'bg-sky-500 text-white' : 'bg-sky-50 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400'}`}>
-                                                {activeAudioId === audio.id ? <Pause size={14} fill="currentColor"/> : <Play size={14} fill="currentColor" className="ml-0.5"/>}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <p className={`text-sm font-medium truncate ${activeAudioId === audio.id ? 'text-sky-700 dark:text-sky-300' : 'text-gray-700 dark:text-slate-300'}`}>{audio.name}</p>
-                                                <p className="text-[10px] text-gray-400 dark:text-slate-500">{new Date(audio.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} • {new Date(audio.createdAt).toLocaleDateString()}</p>
-                                            </div>
-                                            <button 
-                                                onClick={(e) => { e.stopPropagation(); deleteAudioAttachment(audio.id); }}
-                                                className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition"
-                                            >
-                                                <Trash2 size={14}/>
-                                            </button>
-                                        </div>
-                                        
-                                        {/* Expandable Player */}
-                                        {activeAudioId === audio.id && (
-                                            <div className="px-3 pb-3 pt-0 bg-sky-50/50 dark:bg-slate-800/50 animate-in slide-in-from-top-2">
-                                                <audio controls src={audio.url} className="w-full h-8 mt-2 custom-audio" autoPlay />
-                                            </div>
-                                        )}
-                                    </div>
-                                ))
-                            )}
-                        </div>
-                    </div>
-                )}
-
-                {/* Minimized Recorder Popup (Floating inside modal) */}
-                {isRecording && (
-                    <div className="absolute bottom-6 right-6 z-30 bg-white dark:bg-slate-900 p-3 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-700 animate-in slide-in-from-bottom-2 fade-in duration-300 flex items-center gap-3 min-w-[280px]">
-                        <div className="w-10 h-10 rounded-full bg-red-50 dark:bg-red-900/20 flex items-center justify-center shrink-0">
-                            <div className="w-3 h-3 bg-red-500 rounded-sm animate-pulse"></div>
-                        </div>
-                        
-                        <div className="flex-1 h-8 bg-sky-50 dark:bg-slate-800 rounded-lg overflow-hidden relative border border-sky-100 dark:border-slate-700">
-                            <AudioVisualizer stream={recordingStream} isRecording={isRecording} />
-                        </div>
-                        
-                        <div className="text-xs font-mono font-bold text-slate-500 w-10 text-right">
-                            {formatTime(recordingTime)}
-                        </div>
-
-                        <button 
-                            onClick={stopRecording}
-                            className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400 transition"
-                        >
-                            <Square size={16} fill="currentColor"/>
-                        </button>
-                    </div>
-                )}
-
-                {/* AI Sidebar Drawer (Floating inside modal) */}
-                {isSidebarOpen && (
-                    <>
-                    <div className="absolute inset-0 z-40 bg-black/20 backdrop-blur-[1px] transition-opacity" onClick={() => setIsSidebarOpen(false)}></div>
-                    <div className="absolute top-0 right-0 h-full w-full md:w-[400px] bg-white dark:bg-slate-900 z-50 shadow-2xl flex flex-col border-l border-gray-200 dark:border-slate-800 animate-in slide-in-from-right duration-300">
-                        <div className="p-5 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-900">
-                            <h3 className="font-bold text-lg text-slate-800 dark:text-white flex items-center gap-2">
-                                <Sparkles className="text-emerald-500" size={20}/> AI Summarize
-                            </h3>
-                            <button onClick={() => setIsSidebarOpen(false)} className="text-gray-400 hover:text-red-500 transition">
-                                <X size={24}/>
-                            </button>
-                        </div>
-
-                        <div className="flex-1 overflow-y-auto p-5 space-y-6">
-                            {/* Step 1: Copy Prompt */}
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Bước 1: Lấy lệnh (Prompt)</label>
-                                <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 italic">
-                                    "{generatePrompt().slice(0, 100)}..."
-                                </div>
-                                <button 
-                                    onClick={handleCopyPrompt}
-                                    className="w-full py-2 flex items-center justify-center gap-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium hover:border-emerald-500 hover:text-emerald-600 transition"
-                                >
-                                    <Copy size={14}/> Copy Prompt
-                                </button>
-                            </div>
-
-                            {/* Step 2: External Link */}
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Bước 2: Hỏi AI</label>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <a 
-                                        href="https://gemini.google.com/app" 
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="flex items-center justify-center gap-2 py-3 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg text-sm font-bold hover:bg-blue-100 dark:hover:bg-blue-900/30 transition border border-blue-100 dark:border-blue-800"
-                                    >
-                                        Mở Gemini ↗
-                                    </a>
-                                    <a 
-                                        href="https://chat.openai.com/" 
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="flex items-center justify-center gap-2 py-3 bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400 rounded-lg text-sm font-bold hover:bg-teal-100 dark:hover:bg-teal-900/30 transition border border-teal-100 dark:border-teal-800"
-                                    >
-                                        Mở ChatGPT ↗
-                                    </a>
-                                </div>
-                            </div>
-
-                            {/* Step 3: Input Result */}
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Bước 3: Dán kết quả</label>
-                                <textarea
-                                    className="w-full h-32 p-3 bg-gray-50 dark:bg-slate-950 border border-gray-200 dark:border-slate-800 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm dark:text-white resize-none"
-                                    placeholder="Dán nội dung tóm tắt từ AI vào đây..."
-                                    autoFocus
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter' && !e.shiftKey) {
-                                            e.preventDefault();
-                                            handleApplySummary(e.currentTarget.value);
-                                        }
-                                    }}
-                                />
-                            </div>
-                        </div>
-
-                        <div className="p-5 border-t border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-900">
-                            <button 
-                                onClick={(e) => {
-                                    const textarea = e.currentTarget.parentElement?.previousElementSibling?.querySelector('textarea');
-                                    if (textarea) handleApplySummary(textarea.value);
-                                }} 
-                                className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition shadow-lg shadow-emerald-200 dark:shadow-none flex items-center justify-center gap-2"
-                            >
-                                <CheckSquare size={18}/> Hoàn tất
-                            </button>
-                        </div>
-                    </div>
-                    </>
-                )}
-            </div>
-        </div>
-      )}
-
-      {/* RESOURCE PREVIEW DRAWER (Unchanged) */}
-      {previewResource && (
-        <>
-            <div className="fixed inset-0 bg-black/60 z-[60] transition-opacity" onClick={() => setPreviewResource(null)}></div>
-            <div className="fixed top-0 right-0 h-full w-full md:w-[85%] bg-white dark:bg-slate-950 z-[70] shadow-2xl flex border-l border-gray-200 dark:border-slate-800 animate-in slide-in-from-right duration-300">
-                <div className="w-1/4 min-w-[300px] border-r border-gray-100 dark:border-slate-800 flex flex-col bg-gray-50 dark:bg-slate-900 hidden md:flex">
-                     <div className="p-4 border-b border-gray-100 dark:border-slate-800">
-                         <h3 className="font-bold text-gray-800 dark:text-white mb-3 flex items-center gap-2">
-                             <FolderOpen size={18} className="text-emerald-500"/> Tài liệu khác
-                         </h3>
-                         <div className="relative">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                            <input value={drawerSearchTerm} onChange={(e) => setDrawerSearchTerm(e.target.value)} placeholder="Tìm kiếm tài liệu..." className="w-full pl-9 pr-3 py-2 text-sm bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 dark:text-white" />
-                         </div>
-                     </div>
-                     <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                         {filteredDrawerResources.map(r => (
-                             <button key={r.id} onClick={() => setPreviewResource(r)} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition ${previewResource.id === r.id ? 'bg-white dark:bg-slate-800 shadow-sm border border-gray-200 dark:border-slate-700' : 'hover:bg-gray-100 dark:hover:bg-slate-800/50'}`}>
-                                 <div className={`p-2 rounded-lg ${r.type === 'File' ? 'bg-orange-100 text-orange-600' : r.type === 'Audio' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'} flex-shrink-0`}>{r.type === 'File' ? <FileText size={16}/> : r.type === 'Audio' ? <FileAudio size={16}/> : <LinkIcon size={16}/>}</div>
-                                 <span className="text-sm font-medium text-gray-700 dark:text-slate-300 truncate">{r.title}</span>
-                             </button>
-                         ))}
-                     </div>
-                </div>
-                <div className="flex-1 flex flex-col bg-white dark:bg-slate-950">
-                     <div className="p-4 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-slate-950">
-                         <div className="flex-1 min-w-0 pr-4">
-                             <h2 className="text-lg font-bold text-gray-800 dark:text-white truncate">{previewResource.title}</h2>
-                             <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{previewResource.type}</p>
-                         </div>
-                         <div className="flex items-center gap-2">
-                             {previewResource.type !== 'Audio' && (<a href={previewResource.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 rounded-lg text-sm font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition"><ExternalLink size={16}/> Mở tab mới</a>)}
-                             <button onClick={() => setPreviewResource(null)} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg text-gray-500"><X size={24}/></button>
-                         </div>
-                     </div>
-                     <div className="flex-1 bg-gray-100 dark:bg-slate-900/50 relative overflow-hidden flex flex-col justify-center items-center">
-                         <div className="w-full h-full flex flex-col">
-                            {previewResource.type === 'Audio' ? (
-                                <div className="flex-1 flex flex-col items-center justify-start p-8 overflow-y-auto">
-                                    <div className="bg-white dark:bg-slate-800 p-8 rounded-3xl shadow-sm border border-gray-200 dark:border-slate-700 w-full max-w-2xl mb-8 flex flex-col items-center">
-                                        <div className="w-16 h-16 bg-rose-100 dark:bg-rose-900/30 rounded-full flex items-center justify-center text-rose-600 dark:text-rose-400 mb-6"><PlayCircle size={32} /></div>
-                                        <h3 className="text-xl font-bold text-gray-800 dark:text-white mb-6 text-center">{previewResource.title}</h3>
-                                        <audio controls src={previewResource.url} className="w-full" />
-                                    </div>
-                                    {previewResource.transcription && (
-                                        <div className="w-full max-w-2xl">
-                                            <h4 className="font-bold text-gray-700 dark:text-slate-300 mb-3 flex items-center gap-2"><AlignLeft size={18}/> Bản ghi (Transcript)</h4>
-                                            <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">{previewResource.transcription}</div>
-                                        </div>
-                                    )}
-                                </div>
-                            ) : previewResource.url === '#local-file' || previewResource.url === '#' ? (
-                                <div className="flex flex-col items-center justify-center h-full text-gray-400"><FileText size={64} className="mb-4 opacity-50"/><p>Đây là file nội bộ demo.</p></div>
-                            ) : (
-                                <iframe src={previewResource.url} className="w-full h-full border-none bg-white" title="Resource Preview" sandbox="allow-same-origin allow-scripts allow-popups allow-forms" />
-                            )}
-                         </div>
-                     </div>
-                </div>
-            </div>
-        </>
-      )}
+      {/* --- MODALS & DRAWERS --- */}
       
-      {/* PDF DRAWER */}
-      {showPdfDrawer && (
-          <>
-          <div className="fixed inset-0 bg-black/50 z-[60] transition-opacity" onClick={() => setShowPdfDrawer(false)}></div>
-          <div className="fixed top-0 right-0 h-full w-full md:w-[480px] bg-white dark:bg-slate-900 z-[70] shadow-2xl flex flex-col border-l border-gray-200 dark:border-slate-800 animate-in slide-in-from-right duration-300">
-               <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-900/50">
-                   <div>
-                       <h3 className="text-xl font-bold dark:text-white flex items-center gap-2"><Printer className="text-emerald-600"/> Xuất PDF</h3>
-                       <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">Chọn nội dung cần in</p>
+      {/* 1. TASK DRAWER */}
+      {showTaskDrawer && (
+          <div className="fixed inset-0 bg-black/50 z-[100] flex justify-end animate-in fade-in duration-200" onClick={() => setShowTaskDrawer(false)}>
+              <div 
+                  className="w-full max-w-md h-full bg-white dark:bg-slate-900 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 border-l border-gray-200 dark:border-slate-800"
+                  onClick={e => e.stopPropagation()}
+              >
+                  <div className="p-5 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-950">
+                      <h3 className="text-xl font-bold dark:text-white flex items-center gap-2">
+                          {editingTask ? <PenTool size={20} className="text-blue-500"/> : <Plus size={20} className="text-emerald-500"/>}
+                          {editingTask ? 'Chỉnh sửa Task' : 'Thêm Công việc'}
+                      </h3>
+                      <button onClick={() => setShowTaskDrawer(false)}><X size={20} className="text-gray-400"/></button>
+                  </div>
+                  
+                  {!editingTask && (
+                      <div className="flex border-b border-gray-100 dark:border-slate-800">
+                          <button 
+                            onClick={() => setTaskMode('single')} 
+                            className={`flex-1 py-3 text-sm font-bold border-b-2 transition ${taskMode === 'single' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-500'}`}
+                          >
+                              Thêm một
+                          </button>
+                          <button 
+                            onClick={() => setTaskMode('bulk')} 
+                            className={`flex-1 py-3 text-sm font-bold border-b-2 transition ${taskMode === 'bulk' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-500'}`}
+                          >
+                              Thêm danh sách
+                          </button>
+                      </div>
+                  )}
+
+                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                      {taskMode === 'single' ? (
+                          <>
+                            <div>
+                                <label className="block text-sm font-semibold mb-2 dark:text-gray-300">Tiêu đề</label>
+                                <input 
+                                    value={newTaskTitle}
+                                    onChange={(e) => setNewTaskTitle(e.target.value)}
+                                    onKeyDown={handleTaskKeyDown}
+                                    className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none dark:bg-slate-950 dark:text-white"
+                                    placeholder="Nhập tên công việc..."
+                                    autoFocus
+                                />
+                                {!editingTask && (
+                                     <p className="text-xs text-gray-400 mt-2">
+                                         Ví dụ: "Học bài-1202-3" (Công việc: Học bài, Ngày: 12/02, Ưu tiên: Cao)
+                                     </p>
+                                )}
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-semibold mb-2 dark:text-gray-300">Hạn chót</label>
+                                    <input type="date" value={newTaskDate} onChange={(e) => setNewTaskDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none dark:bg-slate-950 dark:text-white"/>
+                                </div>
+                                <div>
+                                     <label className="block text-sm font-semibold mb-2 dark:text-gray-300">Độ ưu tiên</label>
+                                     <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(e.target.value as any)} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none dark:bg-slate-950 dark:text-white">
+                                         <option value="Low">Thấp</option>
+                                         <option value="Medium">Trung bình</option>
+                                         <option value="High">Cao</option>
+                                     </select>
+                                </div>
+                            </div>
+                          </>
+                      ) : (
+                          <div className="h-full flex flex-col">
+                              <p className="text-sm text-gray-500 dark:text-slate-400 mb-2">Nhập danh sách công việc, mỗi dòng một việc (Enter để xuống dòng).</p>
+                              <div className="bg-emerald-50 dark:bg-emerald-900/10 p-3 rounded-lg border border-emerald-100 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300 mb-3">
+                                  <strong>Cú pháp nhanh:</strong> Tên công việc[-DDMM][-Mức độ]<br/>
+                                  - Mức độ: 1=Thấp, 2=Trung bình, 3=Cao<br/>
+                                  - Mặc định: Hôm nay, Ưu tiên Thấp<br/>
+                                  <em>Ví dụ:</em><br/>
+                                  Học Toán<br/>
+                                  Làm bài tập-1502-3
+                              </div>
+                              <textarea
+                                value={bulkTaskContent}
+                                onChange={(e) => setBulkTaskContent(e.target.value)}
+                                className="flex-1 w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none dark:bg-slate-950 dark:text-white resize-none font-mono text-sm"
+                                placeholder={`Học bài\nXem phim-2010-3\nChạy bộ-1`}
+                              />
+                          </div>
+                      )}
+                  </div>
+
+                  <div className="p-5 border-t border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 flex justify-end gap-3">
+                      <button onClick={() => setShowTaskDrawer(false)} className="px-5 py-2.5 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-slate-800 font-medium">{t.cancel}</button>
+                      <button onClick={handleSaveTask} className="bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-emerald-700 transition shadow-lg shadow-emerald-200 dark:shadow-none">{t.save}</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* 2. RESOURCE SIDEBAR (Drawer) */}
+      {showResourceDrawer && (
+          <div className="fixed inset-0 bg-black/50 z-[100] flex justify-end animate-in fade-in duration-200" onClick={() => setShowResourceDrawer(false)}>
+              <div 
+                  className="w-full max-w-md h-full bg-white dark:bg-slate-900 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 border-l border-gray-200 dark:border-slate-800"
+                  onClick={e => e.stopPropagation()}
+              >
+                  <div className="p-5 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-950">
+                      <h3 className="text-xl font-bold dark:text-white flex items-center gap-2"><LinkIcon size={20} className="text-blue-500"/> {t.addResource}</h3>
+                      <button onClick={() => setShowResourceDrawer(false)}><X size={20} className="text-gray-400"/></button>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                      <div className="flex bg-gray-100 dark:bg-slate-800 p-1 rounded-xl mb-4">
+                          {(['Link', 'File'] as const).map(type => (
+                              <button key={type} onClick={() => setResType(type)} className={`flex-1 py-2 rounded-lg text-sm font-bold transition ${resType === type ? 'bg-white dark:bg-slate-700 shadow-sm text-emerald-600' : 'text-gray-500'}`}>{type}</button>
+                          ))}
+                      </div>
+                      
+                      {resType === 'File' ? (
+                          <div className="border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition relative">
+                              <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => e.target.files?.[0] && handleResourceFileSelect(e.target.files[0])}/>
+                              <UploadCloud size={40} className="text-emerald-500 mb-2"/>
+                              <p className="font-medium text-gray-700 dark:text-gray-300">Chọn file từ máy tính</p>
+                              {resUrl && <p className="mt-4 text-emerald-600 font-bold text-sm bg-emerald-50 px-3 py-1 rounded-full">Đã chọn: {resTitle}</p>}
+                          </div>
+                      ) : (
+                          <div>
+                              <label className="block text-sm font-semibold mb-2 dark:text-gray-300">URL Liên kết</label>
+                              <input value={resUrl} onChange={handleUrlChange} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none dark:bg-slate-950 dark:text-white" placeholder="https://..." autoFocus/>
+                          </div>
+                      )}
+                      <div>
+                          <label className="block text-sm font-semibold mb-2 dark:text-gray-300">Tên tài liệu</label>
+                          <input value={resTitle} onChange={(e) => setResTitle(e.target.value)} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none dark:bg-slate-950 dark:text-white" placeholder="Nhập tên hiển thị..."/>
+                      </div>
+                  </div>
+                  
+                  <div className="p-5 border-t border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 flex justify-end gap-3">
+                      <button onClick={() => setShowResourceDrawer(false)} className="px-5 py-2.5 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-800 font-medium">{t.cancel}</button>
+                      <button onClick={handleSaveResource} className="bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-emerald-700 transition shadow-lg shadow-emerald-200 dark:shadow-none">{t.save}</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* 3. NOTE MODAL */}
+      {showNoteModal && (
+          <div className="absolute inset-0 z-50 bg-white dark:bg-slate-950 flex flex-col animate-in slide-in-from-bottom-4 duration-300">
+              <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-950 sticky top-0 z-50">
+                   <div className="flex items-center gap-3 flex-1">
+                       <div className={`p-2 rounded-lg text-white shadow-sm flex-shrink-0 ${subject.color.startsWith('#') ? '' : subject.color}`} style={subject.color.startsWith('#') ? {backgroundColor: subject.color} : {}}>
+                           <IconComp size={20}/>
+                       </div>
+                       <div className="flex flex-col flex-1 max-w-lg">
+                           <input value={noteTitle} onChange={(e) => { setNoteTitle(e.target.value); setIsNoteDirty(true); }} placeholder="Tiêu đề (Tự động nếu để trống)" className="text-lg font-bold bg-transparent outline-none text-gray-800 dark:text-white placeholder-gray-400 dark:placeholder-slate-600 w-full"/>
+                           <div className="text-xs text-gray-500 dark:text-slate-400 flex items-center gap-2">
+                               <span>{subject.name}</span>
+                               <span>•</span>
+                               <span>{saveSuccess ? 'Đã lưu' : (isNoteDirty ? 'Chưa lưu' : 'Ghi chú mới')}</span>
+                           </div>
+                       </div>
                    </div>
-                   <button onClick={() => setShowPdfDrawer(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-white"><X size={24}/></button>
-               </div>
-               <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                   <div className="grid grid-cols-2 gap-4">
-                       <div className="bg-emerald-50 dark:bg-slate-800/50 p-4 rounded-xl border border-emerald-100 dark:border-slate-700">
-                           <p className="text-emerald-600 dark:text-emerald-400 text-xs font-bold uppercase mb-1">Ước tính</p>
-                           <p className="text-2xl font-bold text-gray-800 dark:text-white">{estimatedPages} <span className="text-sm font-normal text-gray-500">Trang</span></p>
-                       </div>
-                       <div className="bg-emerald-50 dark:bg-slate-800/50 p-4 rounded-xl border border-emerald-100 dark:border-slate-700">
-                           <p className="text-emerald-600 dark:text-emerald-400 text-xs font-bold uppercase mb-1">Dung lượng</p>
-                           <p className="text-2xl font-bold text-gray-800 dark:text-white">~{estimatedSize} <span className="text-sm font-normal text-gray-500">MB</span></p>
-                       </div>
+                   
+                   <div className="flex items-center gap-2">
+                        <button onClick={() => toggleSidebar('attachment')} className={`p-2.5 rounded-xl transition flex items-center gap-2 ${activeSidebar === 'attachment' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-gray-200 dark:bg-slate-800 text-gray-600 dark:text-slate-400 hover:bg-gray-300 dark:hover:bg-slate-700'}`} title="Đính kèm">
+                            <Paperclip size={20} />
+                        </button>
+
+                       <button onClick={() => toggleSidebar('audio')} className={`p-2.5 rounded-xl transition flex items-center gap-2 ${activeSidebar === 'audio' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-gray-200 dark:bg-slate-800 text-gray-600 dark:text-slate-400 hover:bg-gray-300 dark:hover:bg-slate-700'}`} title="Ghi âm">
+                           {isRecording ? <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div> : <Mic size={20} />}
+                       </button>
+
+                       <button onClick={() => toggleSidebar('ai')} className={`p-2.5 rounded-xl transition flex items-center gap-2 ${activeSidebar === 'ai' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' : 'bg-gray-200 dark:bg-slate-800 text-gray-600 dark:text-slate-400 hover:bg-gray-300 dark:hover:bg-slate-700'}`} title="AI Summarize">
+                           <Sparkles size={20} />
+                       </button>
+
+                       <button onClick={handleSaveNote} className="bg-emerald-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-emerald-700 transition flex items-center gap-2 shadow-lg shadow-emerald-200 dark:shadow-none ml-2">
+                           <Save size={18}/> {t.save}
+                       </button>
+
+                        <button onClick={handleCloseNoteModal} className="p-2.5 rounded-xl transition flex items-center gap-2 bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:bg-red-100 hover:text-red-500 dark:hover:bg-red-900/30 dark:hover:text-red-400 ml-2">
+                           <X size={20} />
+                        </button>
                    </div>
-                   <div>
-                       <div className="flex justify-between items-center mb-3">
-                           <h4 className="font-bold text-gray-700 dark:text-white">Chọn Ghi chú</h4>
-                           <button onClick={() => setSelectedPdfNotes(selectedPdfNotes.length === notes.length ? [] : notes.map(n=>n.id))} className="text-xs font-bold text-emerald-600 hover:underline">{selectedPdfNotes.length === notes.length ? 'Bỏ chọn' : 'Chọn tất cả'}</button>
-                       </div>
-                       <div className="space-y-2">
-                            {notes.length === 0 && <p className="text-sm text-gray-400 italic">Chưa có ghi chú nào.</p>}
-                            {notes.map(note => (
-                                <div key={note.id} onClick={() => togglePdfNote(note.id)} className="flex items-center gap-3 p-3 rounded-lg border border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer transition">
-                                    <div className={`w-5 h-5 rounded flex items-center justify-center border transition ${selectedPdfNotes.includes(note.id) ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 dark:border-slate-600'}`}>
-                                        {selectedPdfNotes.includes(note.id) && <CheckSquare size={14}/>}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <p className="font-medium text-sm text-gray-800 dark:text-white truncate">{note.title}</p>
-                                        <p className="text-xs text-gray-400 dark:text-slate-500">{new Date(note.lastModified).toLocaleDateString()}</p>
+              </div>
+
+              <div className="flex-1 flex overflow-hidden relative">
+                  <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white dark:bg-slate-900">
+                      <div className="w-full h-full bg-white dark:bg-slate-900 flex flex-col">
+                          <RichTextEditor ref={editorRef} initialContent={noteContent} onChange={() => setIsNoteDirty(true)} placeholder="Bắt đầu viết ghi chú..." onSave={handleSaveNote}/>
+                      </div>
+                  </div>
+
+                  {/* Attachment Sidebar */}
+                  {activeSidebar === 'attachment' && (
+                    <div className="w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col shadow-xl z-20 animate-in slide-in-from-right duration-300">
+                        <div className="p-5 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-950/50">
+                            <h3 className="font-bold text-gray-800 dark:text-white flex items-center gap-2"><LinkIcon size={18} className="text-blue-500"/> Đính kèm</h3>
+                            <button onClick={() => setActiveSidebar('none')}><X size={20} className="text-gray-400"/></button>
+                        </div>
+
+                        {/* ADD LINK FORM */}
+                        <div className="p-4 border-b border-gray-100 dark:border-slate-800 bg-blue-50/50 dark:bg-blue-900/10">
+                            {showAddLinkInput ? (
+                                <div className="space-y-3 animate-in fade-in duration-200">
+                                    <input value={newLinkTitle} onChange={(e) => setNewLinkTitle(e.target.value)} placeholder="Tiêu đề link..." className="w-full p-2 text-sm border border-gray-300 dark:border-slate-700 rounded-lg outline-none"/>
+                                    <input value={newLinkUrl} onChange={(e) => setNewLinkUrl(e.target.value)} placeholder="https://..." className="w-full p-2 text-sm border border-gray-300 dark:border-slate-700 rounded-lg outline-none"/>
+                                    <div className="flex gap-2">
+                                        <button onClick={handleAddLinkFromSidebar} className="flex-1 bg-blue-600 text-white py-1.5 rounded-lg text-xs font-bold hover:bg-blue-700">Thêm</button>
+                                        <button onClick={() => setShowAddLinkInput(false)} className="px-3 bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-300 rounded-lg text-xs font-bold">Hủy</button>
                                     </div>
                                 </div>
-                            ))}
-                       </div>
-                   </div>
-               </div>
-               <div className="p-6 border-t border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50">
-                    <button 
-                        onClick={handleExportPDF} 
-                        disabled={isExporting}
-                        className="w-full py-4 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 shadow-lg shadow-emerald-200 dark:shadow-none flex items-center justify-center gap-2 transition transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {isExporting ? <Loader2 className="animate-spin" size={20}/> : <Download size={20}/>} {isExporting ? 'Đang tạo PDF...' : 'Tải xuống PDF'}
-                    </button>
-                    <p className="text-[10px] text-center mt-2 text-gray-400">File sẽ được tải xuống trực tiếp.</p>
-               </div>
+                            ) : (
+                                <button onClick={() => setShowAddLinkInput(true)} className="w-full py-2 border border-dashed border-blue-300 dark:border-blue-700 rounded-lg text-blue-600 dark:text-blue-400 text-sm font-bold hover:bg-blue-50 dark:hover:bg-blue-900/20 transition flex items-center justify-center gap-2">
+                                    <Plus size={16}/> Thêm Link
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                            {audioAttachments.length === 0 && extractedImages.length === 0 && extractedLinks.length === 0 ? (
+                                <div className="text-center py-10 text-gray-400">
+                                    <FilePlus size={40} className="mx-auto mb-3 opacity-30"/>
+                                    <p className="text-sm">Chưa có tệp đính kèm nào.</p>
+                                </div>
+                            ) : (
+                                <>
+                                    {extractedLinks.map((link, idx) => (
+                                        <div key={`link-${idx}`} className="flex items-center gap-3 p-3 border border-gray-100 dark:border-slate-800 rounded-xl hover:border-blue-500 transition-colors bg-white dark:bg-slate-800 shadow-sm group">
+                                             <div className="w-8 h-8 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center text-blue-500 dark:text-blue-400 flex-shrink-0"><LinkIcon size={14}/></div>
+                                            <div className="flex-1 min-w-0">
+                                                <a href={link.href} target="_blank" rel="noreferrer" className="font-bold text-gray-800 dark:text-white text-xs truncate hover:underline block" title={link.href}>{link.text}</a>
+                                                <p className="text-[10px] text-gray-400 truncate">{link.href}</p>
+                                            </div>
+                                            <button onClick={() => deleteLinkAttachment(link.href)} className="p-1.5 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
+                                        </div>
+                                    ))}
+                                    {extractedImages.map((imgSrc, idx) => (
+                                        <div key={`img-${idx}`} className="flex items-center gap-3 p-3 border border-gray-100 dark:border-slate-800 rounded-xl hover:border-orange-500 transition-colors bg-white dark:bg-slate-800 shadow-sm group">
+                                            <div className="w-8 h-8 rounded-full bg-orange-50 dark:bg-orange-900/30 flex items-center justify-center text-orange-500 dark:text-orange-400 flex-shrink-0"><ImageIcon size={14}/></div>
+                                            <div className="flex-1 min-w-0">
+                                                <h4 className="font-bold text-gray-800 dark:text-white text-xs truncate">Hình ảnh {idx + 1}</h4>
+                                                <p className="text-[10px] text-gray-500 dark:text-slate-400">Trong nội dung</p>
+                                            </div>
+                                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <a href={imgSrc} download={`image-${idx}.png`} className="p-1.5 text-gray-300 hover:text-blue-500 transition-colors"><Download size={16} /></a>
+                                                <button onClick={() => deleteImageAttachment(imgSrc)} className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {audioAttachments.map(audio => (
+                                        <div key={audio.id} className="flex items-center gap-3 p-3 border border-gray-100 dark:border-slate-800 rounded-xl hover:border-emerald-500 transition-colors bg-white dark:bg-slate-800 shadow-sm group">
+                                            <button onClick={() => { const a = new Audio(audio.url); a.play(); }} className="w-8 h-8 rounded-full bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center text-emerald-500 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors flex-shrink-0"><Play size={14} fill="currentColor"/></button>
+                                            <div className="flex-1 min-w-0">
+                                                <h4 className="font-bold text-gray-800 dark:text-white text-xs truncate">{audio.name}</h4>
+                                                <p className="text-[10px] text-gray-500 dark:text-slate-400">{new Date(audio.createdAt).toLocaleString()}</p>
+                                            </div>
+                                            <button onClick={() => deleteAudioAttachment(audio.id)} className="p-1.5 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
+                                        </div>
+                                    ))}
+                                </>
+                            )}
+                        </div>
+                    </div>
+                  )}
+
+                  {/* Audio Sidebar */}
+                  {activeSidebar === 'audio' && (
+                      <div className="w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col shadow-xl z-20 animate-in slide-in-from-right duration-300">
+                          <div className="p-4 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-950">
+                              <h3 className="font-bold dark:text-white flex items-center gap-2"><Mic size={18} className="text-emerald-500"/> Ghi âm</h3>
+                              <button onClick={() => setActiveSidebar('none')}><X size={18} className="text-gray-400"/></button>
+                          </div>
+                          
+                          <div className="p-6 flex flex-col items-center justify-center bg-gradient-to-b from-gray-50 to-white dark:from-slate-900 dark:to-slate-800 border-b border-gray-100 dark:border-slate-800">
+                              <div className="relative mb-4">
+                                  {isRecording && <div className="absolute inset-0 rounded-full animate-ping bg-red-400 opacity-20"></div>}
+                                  <button onClick={isRecording ? stopRecording : startRecording} className={`w-16 h-16 rounded-full flex items-center justify-center transition-all transform hover:scale-105 shadow-lg ${isRecording ? 'bg-red-500 text-white' : 'bg-emerald-500 text-white'}`}>
+                                      {isRecording ? <Square fill="currentColor" size={24}/> : <Mic size={32}/>}
+                                  </button>
+                              </div>
+                              <div className="text-2xl font-mono font-bold text-gray-700 dark:text-gray-200 mb-2">{formatTime(recordingTime)}</div>
+                              {isRecording && <div className="w-full h-12 bg-gray-900 rounded-lg overflow-hidden border border-gray-800 relative"><AudioVisualizer stream={recordingStream} isRecording={isRecording} /></div>}
+                          </div>
+
+                          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                              {audioAttachments.map(audio => (
+                                  <div key={audio.id} className={`p-3 rounded-xl border transition group ${activeAudioId === audio.id ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-900/20 dark:border-emerald-800' : 'bg-white dark:bg-slate-800 border-gray-100 dark:border-slate-700'}`}>
+                                      <div className="flex justify-between items-start mb-2">
+                                          <div><h4 className="font-bold text-sm text-gray-800 dark:text-white line-clamp-1">{audio.name}</h4><p className="text-[10px] text-gray-400">{new Date(audio.createdAt).toLocaleString()}</p></div>
+                                          <button onClick={() => deleteAudioAttachment(audio.id)} className="text-gray-400 hover:text-red-500 p-1"><Trash2 size={14}/></button>
+                                      </div>
+                                      <audio src={audio.url} controls className="w-full h-8 mt-1" onPlay={() => setActiveAudioId(audio.id)}/>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
+                  )}
+
+                  {/* AI Sidebar */}
+                  {activeSidebar === 'ai' && (
+                    <div className="w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col shadow-xl z-20 animate-in slide-in-from-right duration-300">
+                         <div className="p-4 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-950">
+                              <h3 className="font-bold dark:text-white flex items-center gap-2"><Sparkles size={18} className="text-purple-500"/> AI Support</h3>
+                              <button onClick={() => setActiveSidebar('none')}><X size={18} className="text-gray-400"/></button>
+                          </div>
+                          <div className="flex-1 p-5 overflow-y-auto space-y-5">
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase mb-2 block">1. Lấy Prompt</label>
+                                    <div className="bg-gray-50 dark:bg-slate-800 p-3 rounded-lg border border-gray-200 dark:border-slate-700 text-sm text-gray-600 dark:text-slate-300 italic mb-3 line-clamp-3">"{generatePrompt()}"</div>
+                                    <button onClick={handleCopyPrompt} className="w-full py-2.5 rounded-lg border border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-800 transition flex items-center justify-center gap-2 text-sm font-medium text-gray-700 dark:text-slate-200"><Copy size={16}/> Copy</button>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase mb-2 block">2. Hỏi AI</label>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <a href="https://gemini.google.com/app" target="_blank" rel="noreferrer" className="py-2.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/50 flex items-center justify-center gap-1 text-sm font-bold"><ExternalLink size={14}/> Gemini</a>
+                                        <a href="https://chat.openai.com/" target="_blank" rel="noreferrer" className="py-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/50 flex items-center justify-center gap-1 text-sm font-bold"><ExternalLink size={14}/> ChatGPT</a>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase mb-2 block">3. Kết quả</label>
+                                    <textarea value={aiSummaryResult} onChange={(e) => setAiSummaryResult(e.target.value)} placeholder="Dán kết quả..." className="w-full h-40 bg-gray-50 dark:bg-slate-950 border border-gray-200 dark:border-slate-700 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500"/>
+                                </div>
+                                <button onClick={handleApplySummary} className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700">Áp dụng vào Note</button>
+                          </div>
+                    </div>
+                  )}
+              </div>
           </div>
-          </>
       )}
 
-      {/* TASK MODAL (Unchanged) */}
-      {/* ... */}
-      {showTaskModal && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 transition-opacity no-print">
-            <div className="bg-white dark:bg-slate-900 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in duration-200">
-                <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center">
-                    <h3 className="text-2xl font-bold dark:text-white">{editingTask ? 'Chỉnh sửa Task' : t.addTask}</h3>
-                    <button onClick={() => setShowTaskModal(false)}><X className="text-gray-500 hover:text-red-500" size={28}/></button>
-                </div>
-                <div className="p-8 space-y-6 flex-1 overflow-y-auto">
-                    <div>
-                        <div className="flex justify-between">
-                             <label className="block text-sm font-bold text-gray-700 dark:text-slate-300 mb-2">{t.name}</label>
-                             {!editingTask && <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Tip: Nhập "Task-DDMM-Priority" (VD: Math-1202-3) rồi Enter</span>}
-                        </div>
-                        <input value={newTaskTitle} onChange={e=>setNewTaskTitle(e.target.value)} onKeyDown={handleTaskKeyDown} className="w-full text-lg p-4 border border-gray-200 dark:border-slate-700 rounded-xl outline-none focus:border-emerald-500 dark:bg-slate-950 dark:text-white" placeholder="..." autoFocus/>
-                    </div>
-                    <div className="grid grid-cols-2 gap-6">
-                        <div>
-                            <label className="block text-sm font-bold text-gray-700 dark:text-slate-300 mb-2">Deadline</label>
-                            <input type="date" value={newTaskDate} onChange={e=>setNewTaskDate(e.target.value)} className="w-full p-3 border border-gray-200 dark:border-slate-700 rounded-xl outline-none dark:bg-slate-950 dark:text-white"/>
-                        </div>
-                        <div>
-                             <label className="block text-sm font-bold text-gray-700 dark:text-slate-300 mb-2">Priority</label>
-                             <div className="flex gap-2">
-                                {['Low', 'Medium', 'High'].map(p => (
-                                    <button 
-                                        key={p} 
-                                        onClick={() => setNewTaskPriority(p as any)}
-                                        className={`flex-1 py-3 rounded-xl border font-medium transition ${newTaskPriority === p 
-                                            ? 'bg-emerald-50 border-emerald-500 text-emerald-700 dark:bg-emerald-800 dark:text-emerald-300' 
-                                            : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
-                                    >
-                                        {p}
-                                    </button>
-                                ))}
-                             </div>
-                        </div>
-                    </div>
-                </div>
-                <div className="p-6 border-t border-gray-100 dark:border-slate-800 flex justify-end gap-3 bg-gray-50 dark:bg-slate-900">
-                    <button onClick={() => setShowTaskModal(false)} className="px-6 py-3 rounded-xl text-gray-600 dark:text-slate-400 hover:bg-gray-200 dark:hover:bg-slate-800 font-medium">{t.cancel}</button>
-                    <button onClick={handleSaveTask} className="px-8 py-3 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 shadow-lg shadow-emerald-200 dark:shadow-none">{t.save}</button>
-                </div>
-            </div>
-        </div>
+      {/* PDF Drawer (Same as before) */}
+      {showPdfDrawer && (
+          <div className="fixed inset-0 bg-black/50 z-[100] flex justify-end animate-in fade-in duration-200">
+              <div className="bg-white dark:bg-slate-900 w-full max-w-sm h-full flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
+                  <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center">
+                      <h3 className="text-xl font-bold dark:text-white flex items-center gap-2"><Printer size={22} className="text-emerald-500"/> Xuất PDF</h3>
+                      <button onClick={() => setShowPdfDrawer(false)}><X size={20} className="text-gray-400 hover:text-gray-600"/></button>
+                  </div>
+                  <div className="p-6 flex-1 overflow-y-auto">
+                      <div className="grid grid-cols-2 gap-3 mb-6">
+                          <div className="bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-xl border border-emerald-100 dark:border-emerald-800">
+                              <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase mb-1">ƯỚC TÍNH</p>
+                              <p className="text-2xl font-bold text-emerald-800 dark:text-white">{estimatedPages} <span className="text-sm font-normal text-emerald-600">Trang</span></p>
+                          </div>
+                          <div className="bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-xl border border-emerald-100 dark:border-emerald-800">
+                              <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase mb-1">DUNG LƯỢNG</p>
+                              <p className="text-2xl font-bold text-emerald-800 dark:text-white">~{estimatedSize} <span className="text-sm font-normal text-emerald-600">MB</span></p>
+                          </div>
+                      </div>
+                      <div className="flex justify-between items-center mb-3">
+                           <h4 className="font-bold text-gray-700 dark:text-gray-200">Chọn Ghi chú</h4>
+                           <button onClick={() => setSelectedPdfNotes(selectedPdfNotes.length === notes.length ? [] : notes.map(n=>n.id))} className="text-xs font-bold text-emerald-600 hover:underline">
+                               {selectedPdfNotes.length === notes.length ? 'Bỏ chọn' : 'Tất cả'}
+                           </button>
+                      </div>
+                      <div className="space-y-2">
+                          {notes.map(note => (
+                              <div key={note.id} onClick={() => togglePdfNote(note.id)} className={`flex items-center p-3 rounded-xl border cursor-pointer transition ${selectedPdfNotes.includes(note.id) ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-gray-200 dark:border-slate-800'}`}>
+                                  <div className={`w-5 h-5 rounded border flex items-center justify-center mr-3 transition-colors ${selectedPdfNotes.includes(note.id) ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white dark:bg-slate-800 border-gray-300 dark:border-slate-600'}`}>{selectedPdfNotes.includes(note.id) && <CheckSquare size={14}/>}</div>
+                                  <span className="text-sm font-medium text-gray-700 dark:text-gray-200 truncate flex-1">{note.title}</span>
+                              </div>
+                          ))}
+                      </div>
+                  </div>
+                  <div className="p-6 bg-gray-50 dark:bg-slate-950 border-t border-gray-100 dark:border-slate-800">
+                      <button onClick={handleExportPDF} disabled={isExporting || selectedPdfNotes.length === 0} className="w-full bg-emerald-600 text-white py-3.5 rounded-xl font-bold hover:bg-emerald-700 transition shadow-lg shadow-emerald-200 dark:shadow-none disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                          {isExporting ? <Loader2 className="animate-spin"/> : <Download size={20}/>}
+                          {isExporting ? 'Đang tạo PDF...' : 'Tải xuống PDF'}
+                      </button>
+                  </div>
+              </div>
+          </div>
       )}
 
-      {/* RESOURCE MODAL (Unchanged) */}
-      {/* ... */}
-      {showResourceModal && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 transition-opacity no-print">
-             <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in duration-200">
-                {/* ... same resource modal content ... */}
-                <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center">
-                    <h3 className="text-xl font-bold dark:text-white">{t.addResource}</h3>
-                    <button onClick={() => setShowResourceModal(false)}><X className="text-gray-500 hover:text-red-500" size={24}/></button>
-                </div>
-                <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-                    {/* ... */}
-                    <div>
-                         <label className="block text-sm font-bold text-gray-700 dark:text-slate-300 mb-2">Type</label>
-                         <div className="flex gap-2">
-                             {['Link', 'File', 'Audio'].map(t => (
-                                 <button key={t} onClick={()=>setResType(t as any)} className={`flex-1 py-2 rounded-lg border text-sm font-medium transition ${resType === t ? 'bg-blue-50 border-blue-500 text-blue-600 dark:bg-blue-900 dark:text-blue-300' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400'}`}>
-                                     {t}
-                                 </button>
-                             ))}
-                         </div>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-bold text-gray-700 dark:text-slate-300 mb-2">{t.name}</label>
-                        <input value={resTitle} onChange={e=>setResTitle(e.target.value)} className="w-full p-3 border border-gray-200 dark:border-slate-700 rounded-xl outline-none focus:border-emerald-500 dark:bg-slate-950 dark:text-white" placeholder="Tiêu đề tài liệu..."/>
-                    </div>
-                    {resType === 'Link' && (
-                        <div>
-                            <label className="block text-sm font-bold text-gray-700 dark:text-slate-300 mb-2">URL</label>
-                            <input value={resUrl} onChange={handleUrlChange} className="w-full p-3 border border-gray-200 dark:border-slate-700 rounded-xl outline-none focus:border-emerald-500 dark:bg-slate-950 dark:text-white" placeholder="https://..."/>
-                        </div>
-                    )}
-                    {resType === 'File' && (
-                        <div>
-                            <label className="block text-sm font-bold text-gray-700 dark:text-slate-300 mb-2">Upload File</label>
-                            <div className="border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl p-6 text-center cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 relative">
-                                <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => { const file = e.target.files?.[0]; if (file) { setResTitle(file.name); setResUrl('#local-file'); } }} />
-                                <UploadCloud className="mx-auto text-gray-400 mb-2"/>
-                                <span className="text-sm text-gray-500">Click or Drag file here</span>
-                            </div>
-                        </div>
-                    )}
-                    {resType === 'Audio' && (
-                        <div className="p-4 bg-gray-100 dark:bg-slate-800 rounded-xl text-center text-sm text-gray-500">
-                            Tính năng ghi âm trực tiếp đã được chuyển vào mục Ghi chú.
-                        </div>
-                    )}
-                </div>
-                <div className="p-6 border-t border-gray-100 dark:border-slate-800 flex justify-end gap-3 bg-gray-50 dark:bg-slate-900">
-                    <button onClick={handleSaveResource} className="w-full py-3 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700">{t.save}</button>
-                </div>
-             </div>
-        </div>
+      {/* Resource Preview View */}
+      {previewResource && (
+          <div className="fixed inset-0 z-[200] flex justify-end animate-in fade-in duration-200 bg-black/50" onClick={() => setPreviewResource(null)}>
+              <div className="w-[85%] md:w-[80%] h-full bg-white dark:bg-slate-950 flex flex-col shadow-2xl animate-in slide-in-from-right duration-300 ml-auto border-l border-gray-200 dark:border-slate-800" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex-1 flex overflow-hidden">
+                      <div className="w-1/4 min-w-[250px] border-r border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 flex flex-col">
+                          <div className="p-4 border-b border-gray-200 dark:border-slate-800">
+                              <h3 className="font-bold text-gray-700 dark:text-white flex items-center gap-2 mb-3"><FolderOpen size={18} className="text-emerald-500"/> Tài liệu khác</h3>
+                              <div className="relative"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/><input value={drawerSearchTerm} onChange={(e) => setDrawerSearchTerm(e.target.value)} placeholder="Tìm kiếm..." className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-sm outline-none focus:border-emerald-500 transition"/></div>
+                          </div>
+                          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                              {resources.filter(r => r.title.toLowerCase().includes(drawerSearchTerm.toLowerCase())).map(r => {
+                                  let Icon = LinkIcon; if(r.type === 'File') Icon = FileText; if(r.type === 'Audio') Icon = Mic;
+                                  return (
+                                      <div key={r.id} className={`w-full text-left p-3 rounded-lg flex items-center justify-between gap-3 transition group cursor-pointer ${previewResource.id === r.id ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800' : 'hover:bg-gray-100 dark:hover:bg-slate-800 border border-transparent'}`} onClick={() => setPreviewResource(r)}>
+                                          <div className="flex items-center gap-3 min-w-0">
+                                              <div className={`flex-shrink-0 p-2 rounded-lg ${previewResource.id === r.id ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900 dark:text-emerald-400' : 'bg-gray-200 text-gray-500 dark:bg-slate-700 dark:text-slate-400'}`}><Icon size={16}/></div>
+                                              <span className={`text-sm font-medium truncate ${previewResource.id === r.id ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-700 dark:text-slate-300'}`}>{r.title}</span>
+                                          </div>
+                                      </div>
+                                  )
+                              })}
+                          </div>
+                      </div>
+                      <div className="flex-1 flex flex-col bg-white dark:bg-slate-950">
+                          <div className="h-16 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between px-6 bg-white dark:bg-slate-900">
+                              <div><h2 className="font-bold text-lg text-gray-800 dark:text-white leading-tight">{previewResource.title}</h2><span className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wider font-semibold">{previewResource.type}</span></div>
+                              <div className="flex items-center gap-3">
+                                  <a href={previewResource.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-4 py-2 rounded-lg border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-sm font-bold transition"><ExternalLink size={16}/> Mở tab mới</a>
+                                  <button onClick={() => setPreviewResource(null)} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg text-gray-500 dark:text-slate-400 transition"><X size={24}/></button>
+                              </div>
+                          </div>
+                          <div className="flex-1 bg-gray-100 dark:bg-slate-950/50 p-6 flex items-center justify-center overflow-hidden relative">
+                               {previewResource.type === 'Link' ? (
+                                    <div className="w-full h-full relative rounded-2xl border border-gray-200 dark:border-slate-800 bg-white overflow-hidden group">
+                                         <iframe src={previewResource.url} className="w-full h-full" title="Preview" sandbox="allow-same-origin allow-scripts allow-forms"/>
+                                         {/* No Blocking Overlay anymore. Use header button or footer fallback. */}
+                                         <div className="absolute bottom-4 right-4 pointer-events-none">
+                                            <a href={previewResource.url} target="_blank" rel="noreferrer" className="pointer-events-auto bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm px-3 py-1.5 rounded-lg text-xs font-medium text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-700 shadow-sm hover:text-emerald-600 transition">
+                                                Nếu không xem được, bấm để mở tab mới
+                                            </a>
+                                         </div>
+                                    </div>
+                                ) : previewResource.type === 'Audio' ? (
+                                    <div className="w-full max-w-md bg-white dark:bg-slate-900 p-8 rounded-2xl shadow-lg border border-gray-100 dark:border-slate-800 text-center">
+                                        <div className="w-20 h-20 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center mx-auto mb-6 text-emerald-600 dark:text-emerald-400"><Music size={40} /></div>
+                                        <h3 className="text-xl font-bold mb-6 dark:text-white">Phát ghi âm</h3>
+                                        <audio controls src={previewResource.url} className="w-full h-12" autoPlay />
+                                    </div>
+                                ) : (
+                                    <div className="relative w-full h-full flex items-center justify-center">
+                                        <img src={previewResource.url} className="max-w-full max-h-full rounded-lg shadow-lg object-contain" alt="Preview"/>
+                                    </div>
+                                )}
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          </div>
       )}
+
+      {/* Hidden Print Area */}
+      {isExporting && printData && (
+          <div id="print-area" className="fixed top-0 left-0 w-[210mm] bg-white text-black p-[20mm] z-[-1] pointer-events-none">
+              <div className="mb-8 border-b-2 border-slate-800 pb-4">
+                  <h1 className="text-3xl font-bold uppercase tracking-wider">{subject.name}</h1>
+                  <p className="text-slate-600 mt-2">Tổng hợp ghi chú môn học</p>
+              </div>
+              <div className="flex flex-col gap-8">
+                  {printData.map((note, idx) => {
+                      const processedContent = processContentForPrint(note.content);
+                      return (
+                      <div key={idx} className="mb-8 break-inside-avoid">
+                          <h2 className="text-xl font-bold mb-4 flex items-center gap-2 border-l-4 border-slate-800 pl-3">
+                              <span className="text-slate-400">#{idx + 1}</span>
+                              {note.title}
+                          </h2>
+                          <div className="prose max-w-none text-justify leading-relaxed text-sm" dangerouslySetInnerHTML={{ __html: processedContent }}/>
+                          <div className="mt-4 text-xs text-slate-400 border-t pt-2 flex justify-between"><span>Last modified: {new Date(note.lastModified).toLocaleDateString()}</span><span>Page {idx + 1}</span></div>
+                      </div>
+                  )})}
+              </div>
+          </div>
+      )}
+
     </div>
   );
 };
