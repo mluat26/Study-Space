@@ -4,7 +4,8 @@ import { INITIAL_SUBJECTS, INITIAL_TASKS, INITIAL_NOTES, INITIAL_RESOURCES, COLO
 import Dashboard from './components/Dashboard';
 import SubjectDetail from './components/SubjectDetail';
 import SearchManager from './components/SearchManager';
-import { LayoutGrid, Search, Moon, Sun, Database, HardDrive, Download, X, GraduationCap, BookOpen, Menu, ChevronLeft, ChevronRight, Trash2, MoreHorizontal, ArrowUp, ArrowDown, PenSquare, GripVertical, ListFilter, Plus, CheckCircle, FileText, Palette, AlertTriangle, RefreshCcw } from 'lucide-react';
+import { DataExportImport } from './components/DataExportImport';
+import { LayoutGrid, Search, Moon, Sun, Database, HardDrive, Download, X, GraduationCap, BookOpen, Menu, ChevronLeft, ChevronRight, Trash2, MoreHorizontal, ArrowUp, ArrowDown, PenSquare, GripVertical, ListFilter, Plus, CheckCircle, FileText, Palette, AlertTriangle, RefreshCcw, Upload } from 'lucide-react';
 import { dbGet, dbSet, dbClear, getUsageEstimate } from './utils/indexedDB';
 
 // --- REMOVED useStickyState in favor of Async Loading ---
@@ -191,7 +192,7 @@ const SubjectDrawer = ({ isOpen, onClose, onSave, lang, initialData }: any) => {
     )
 }
 
-const StorageView = ({ subjects, tasks, notes, onDeleteSubject, onDeleteTask, onDeleteNote, onResetData }: any) => {
+const StorageView = ({ subjects, tasks, notes, resources, onDeleteSubject, onDeleteTask, onDeleteNote, onResetData, onOpenExport, onOpenImport }: any) => {
     const [activeTab, setActiveTab] = useState<'overview' | 'subjects' | 'tasks' | 'notes'>('overview');
     const [usage, setUsage] = useState({ usage: 0, quota: 0 });
 
@@ -210,18 +211,6 @@ const StorageView = ({ subjects, tasks, notes, onDeleteSubject, onDeleteTask, on
     const usedMB = (usage.usage / 1024 / 1024).toFixed(2);
     // Quota often returns conservative estimate, let's show GB if large
     const quotaDisplay = (usage.quota / 1024 / 1024 / 1024).toFixed(1) + ' GB';
-
-    const downloadBackup = () => {
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({
-            subjects, tasks, notes
-        }));
-        const downloadAnchorNode = document.createElement('a');
-        downloadAnchorNode.setAttribute("href", dataStr);
-        downloadAnchorNode.setAttribute("download", `study_backup_${new Date().toISOString().split('T')[0]}.json`);
-        document.body.appendChild(downloadAnchorNode);
-        downloadAnchorNode.click();
-        downloadAnchorNode.remove();
-    }
 
     const handleDeleteAll = async () => {
         if (window.confirm('CẢNH BÁO: Hành động này sẽ xóa toàn bộ dữ liệu của bạn và không thể khôi phục. Bạn có chắc chắn không?')) {
@@ -273,15 +262,19 @@ const StorageView = ({ subjects, tasks, notes, onDeleteSubject, onDeleteTask, on
                             </div>
                         </div>
                         
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <button onClick={downloadBackup} className="w-full flex items-center justify-center gap-2 bg-gray-100 dark:bg-slate-800 text-gray-800 dark:text-white px-6 py-3 rounded-xl font-bold hover:bg-gray-200 dark:hover:bg-slate-700 transition">
-                                <Download size={20} /> Sao lưu dữ liệu (Backup)
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <button onClick={onOpenExport} className="w-full flex items-center justify-center gap-2 bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-700 transition shadow-lg shadow-emerald-200 dark:shadow-none">
+                                <Download size={20} /> Xuất Dữ Liệu (Backup)
                             </button>
                             
-                            <button onClick={handleDeleteAll} className="w-full flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-900/50 px-6 py-3 rounded-xl font-bold hover:bg-red-100 dark:hover:bg-red-900/40 transition">
-                                <Trash2 size={20} /> Xóa toàn bộ dữ liệu
+                            <button onClick={onOpenImport} className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-200 dark:shadow-none">
+                                <Upload size={20} /> Nhập Dữ Liệu (Restore)
                             </button>
                         </div>
+
+                        <button onClick={handleDeleteAll} className="w-full flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-900/50 px-6 py-3 rounded-xl font-bold hover:bg-red-100 dark:hover:bg-red-900/40 transition">
+                            <Trash2 size={20} /> Xóa toàn bộ dữ liệu
+                        </button>
                     </div>
                 )}
              </div>
@@ -409,6 +402,10 @@ const App: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
   
+  // Data Transfer Modals
+  const [showDataTransfer, setShowDataTransfer] = useState(false);
+  const [transferMode, setTransferMode] = useState<'export' | 'import'>('export');
+
   // Sidebar Sub-menu Logic (Now a secondary sidebar)
   const [isSubMenuOpen, setIsSubMenuOpen] = useState(false); 
   const [showQuickNoteModal, setShowQuickNoteModal] = useState(false);
@@ -579,6 +576,82 @@ const App: React.FC = () => {
           setTimeout(() => setOpenedNoteId(newNote.id), 100);
       }
   }
+
+  // --- IMPORT HANDLER ---
+  const handleImportData = async (data: { subjects: Subject[], notes: Note[], tasks: Task[], resources: Resource[] }, strategy: 'merge' | 'copy') => {
+      if (strategy === 'copy') {
+          // 1. Create mapping for old IDs to new IDs
+          const idMap: Record<string, string> = {};
+          
+          // Generate new IDs for subjects
+          const newSubjects = data.subjects.map(s => {
+              const newId = Date.now().toString() + Math.random().toString(36).substr(2, 5);
+              idMap[s.id] = newId;
+              return { ...s, id: newId, name: `${s.name} (Imported)` };
+          });
+
+          // Remap children
+          const newNotes = data.notes.filter(n => idMap[n.subjectId]).map(n => ({
+              ...n,
+              id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+              subjectId: idMap[n.subjectId]
+          }));
+
+          const newTasks = data.tasks.filter(t => idMap[t.subjectId]).map(t => ({
+              ...t,
+              id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+              subjectId: idMap[t.subjectId]
+          }));
+
+          const newResources = data.resources.filter(r => idMap[r.subjectId]).map(r => ({
+              ...r,
+              id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+              subjectId: idMap[r.subjectId]
+          }));
+
+          setSubjects(prev => [...prev, ...newSubjects]);
+          setNotes(prev => [...prev, ...newNotes]);
+          setTasks(prev => [...prev, ...newTasks]);
+          setResources(prev => [...prev, ...newResources]);
+
+      } else {
+          // MERGE STRATEGY
+          // Basic merge: If ID exists, overwrite. If not, add.
+          const mergedSubjects = [...subjects];
+          data.subjects.forEach(s => {
+              const idx = mergedSubjects.findIndex(ex => ex.id === s.id);
+              if (idx >= 0) mergedSubjects[idx] = s;
+              else mergedSubjects.push(s);
+          });
+
+          const mergedNotes = [...notes];
+          data.notes.forEach(n => {
+              const idx = mergedNotes.findIndex(ex => ex.id === n.id);
+              if (idx >= 0) mergedNotes[idx] = n;
+              else mergedNotes.push(n);
+          });
+
+          const mergedTasks = [...tasks];
+          data.tasks.forEach(t => {
+              const idx = mergedTasks.findIndex(ex => ex.id === t.id);
+              if (idx >= 0) mergedTasks[idx] = t;
+              else mergedTasks.push(t);
+          });
+
+          const mergedResources = [...resources];
+          data.resources.forEach(r => {
+              const idx = mergedResources.findIndex(ex => ex.id === r.id);
+              if (idx >= 0) mergedResources[idx] = r;
+              else mergedResources.push(r);
+          });
+
+          setSubjects(mergedSubjects);
+          setNotes(mergedNotes);
+          setTasks(mergedTasks);
+          setResources(mergedResources);
+      }
+      alert('Nhập dữ liệu thành công!');
+  };
 
   const visibleSubjects = subjects.filter(s => !s.isArchived).slice(0, 4);
   const hiddenSubjects = subjects.filter(s => !s.isArchived).slice(4);
@@ -751,11 +824,14 @@ const App: React.FC = () => {
             <StorageView 
                 subjects={subjects} 
                 tasks={tasks} 
-                notes={notes} 
+                notes={notes}
+                resources={resources}
                 onDeleteSubject={handleDeleteSubject} 
                 onDeleteTask={handleDeleteTask} 
                 onDeleteNote={handleDeleteNote}
-                onResetData={handleResetData} 
+                onResetData={handleResetData}
+                onOpenExport={() => { setTransferMode('export'); setShowDataTransfer(true); }}
+                onOpenImport={() => { setTransferMode('import'); setShowDataTransfer(true); }}
             />
         ) : activeSubject ? (
           <SubjectDetail 
@@ -802,6 +878,17 @@ const App: React.FC = () => {
         isOpen={showQuickNoteModal}
         onClose={() => setShowQuickNoteModal(false)}
         onSave={handleQuickCreate}
+      />
+
+      <DataExportImport 
+        isOpen={showDataTransfer}
+        mode={transferMode}
+        onClose={() => setShowDataTransfer(false)}
+        subjects={subjects}
+        notes={notes}
+        tasks={tasks}
+        resources={resources}
+        onImport={handleImportData}
       />
     </div>
   );

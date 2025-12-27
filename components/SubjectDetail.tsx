@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Subject, Task, Note, Resource, Language } from '../types';
-import { Plus, CheckCircle, Circle, FileText, Link as LinkIcon, Trash2, ArrowLeft, X, Printer, Calendar, ArrowRight, GripVertical, AlertCircle, PlayCircle, FolderOpen, Video, Copy, Wand2, PenTool, Download, CheckSquare, Square, File, UploadCloud, Clock, Save, FilePlus, Sparkles, Archive, Search, ExternalLink, Mic, StopCircle, FileAudio, AlignLeft, Eye, EyeOff, MessageSquare, Headphones, ChevronRight, Play, Pause, Music } from 'lucide-react';
+import { Plus, CheckCircle, Circle, FileText, Link as LinkIcon, Trash2, ArrowLeft, X, Printer, Calendar, ArrowRight, GripVertical, AlertCircle, PlayCircle, FolderOpen, Video, Copy, Wand2, PenTool, Download, CheckSquare, Square, File, UploadCloud, Clock, Save, FilePlus, Sparkles, Archive, Search, ExternalLink, Mic, StopCircle, FileAudio, AlignLeft, Eye, EyeOff, MessageSquare, Headphones, ChevronRight, Play, Pause, Music, Loader2 } from 'lucide-react';
 import { ICONS, TRANSLATIONS } from '../constants';
 import RichTextEditor, { RichTextEditorRef } from './RichTextEditor';
 import AudioVisualizer from './AudioVisualizer';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
 interface SubjectDetailProps {
   subject: Subject;
@@ -93,6 +95,8 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
 
   // PDF Export State
   const [selectedPdfNotes, setSelectedPdfNotes] = useState<string[]>([]);
+  const [printData, setPrintData] = useState<Note[] | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Open note if ID is passed
   useEffect(() => {
@@ -163,6 +167,43 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
           cleanedContent: doc.body.innerHTML,
           audios
       };
+  };
+
+  // --- Process Content for Printing (Replace Audio Data with Visual Placeholder) ---
+  const processContentForPrint = (htmlContent: string) => {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(htmlContent, 'text/html');
+      
+      const audioDivs = doc.querySelectorAll('.smartstudy-audio-data');
+      if (audioDivs.length > 0) {
+          const placeholderContainer = doc.createElement('div');
+          placeholderContainer.style.cssText = "margin-top: 20px; display: flex; flex-direction: column; gap: 10px;";
+          
+          audioDivs.forEach(div => {
+              const name = div.getAttribute('data-name') || 'Bản ghi âm';
+              const created = div.getAttribute('data-created') || '';
+              const dateStr = created ? new Date(created).toLocaleString('vi-VN') : '';
+              
+              const item = doc.createElement('div');
+              item.style.cssText = "border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; background-color: #f8fafc; display: flex; align-items: center; gap: 12px; color: #334155; font-family: sans-serif; page-break-inside: avoid;";
+              
+              // SVG Icon as string
+              item.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                <div>
+                    <div style="font-weight: 600; font-size: 14px;">${name}</div>
+                    <div style="font-size: 12px; color: #64748b;">${dateStr}</div>
+                </div>
+              `;
+              
+              placeholderContainer.appendChild(item);
+              div.remove();
+          });
+          
+          doc.body.appendChild(placeholderContainer);
+      }
+
+      return doc.body.innerHTML;
   };
 
   const openNote = (note: Note | null) => {
@@ -470,11 +511,58 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       setSelectedPdfNotes(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   }
 
-  const handlePrint = () => {
-      const originalTitle = document.title;
-      document.title = `${subject.name} - Study Notes`;
-      window.print();
-      document.title = originalTitle;
+  const handleExportPDF = () => {
+      const notesToPrint = notes.filter(n => selectedPdfNotes.includes(n.id));
+      if (notesToPrint.length === 0) return;
+      
+      setIsExporting(true);
+      setPrintData(notesToPrint);
+      
+      // Delay to allow DOM rendering
+      setTimeout(async () => {
+          const element = document.getElementById('print-area');
+          if (element) {
+             try {
+                 const canvas = await html2canvas(element, {
+                     scale: 2,
+                     useCORS: true,
+                     backgroundColor: '#ffffff'
+                 });
+                 
+                 const imgData = canvas.toDataURL('image/png');
+                 const pdf = new jsPDF('p', 'mm', 'a4');
+                 const pdfWidth = pdf.internal.pageSize.getWidth();
+                 const pdfHeight = pdf.internal.pageSize.getHeight();
+                 
+                 const imgProps = pdf.getImageProperties(imgData);
+                 const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
+                 
+                 let heightLeft = imgHeight;
+                 let position = 0;
+                 
+                 // First page
+                 pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+                 heightLeft -= pdfHeight;
+                 
+                 // Subsequent pages
+                 while (heightLeft > 0) {
+                     position -= pdfHeight; 
+                     pdf.addPage();
+                     pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+                     heightLeft -= pdfHeight;
+                 }
+                 
+                 pdf.save(`${subject.name}_Notes.pdf`);
+             } catch (e) {
+                 console.error(e);
+                 alert("Lỗi khi xuất PDF");
+             } finally {
+                 setIsExporting(false);
+                 setPrintData(null);
+                 setShowPdfDrawer(false);
+             }
+          }
+      }, 1000);
   }
   
   const IconComp = ICONS[subject.icon] || ICONS['Book'];
@@ -544,10 +632,6 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       <style>{`
         @media print {
             body > * { display: none !important; }
-            #print-area, #print-area * { display: block !important; visibility: visible; }
-            #print-area { position: fixed; left: 0; top: 0; width: 100%; min-height: 100vh; padding: 20px; background: white; color: black; z-index: 9999; }
-            .no-print { display: none !important; }
-            * { color: black !important; background: white !important; border-color: #ddd !important; box-shadow: none !important; }
         }
       `}</style>
 
@@ -794,6 +878,42 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
           </div>
         )}
       </div>
+
+      {/* Hidden Print Area - visible only for html2canvas capturing */}
+      {printData && (
+        <div 
+            id="print-area" 
+            style={{
+                position: 'absolute',
+                top: 0,
+                left: '-9999px', // Off-screen
+                width: '210mm', // A4 width
+                padding: '20px',
+                backgroundColor: 'white',
+                color: 'black',
+                zIndex: -1000
+            }}
+        >
+            <div className="text-center mb-8 border-b pb-4">
+                <h1 className="text-3xl font-bold mb-2">{subject.name}</h1>
+                <p className="text-gray-500">Danh sách ghi chú - {new Date().toLocaleDateString()}</p>
+            </div>
+            <div className="space-y-8">
+                {printData.map(note => (
+                    <div key={note.id} className="note-item mb-8 border-b pb-6 break-inside-avoid">
+                        <h2 className="text-2xl font-bold mb-4">{note.title}</h2>
+                        <div 
+                            className="prose max-w-none text-gray-800 leading-relaxed"
+                            dangerouslySetInnerHTML={{ __html: processContentForPrint(note.content) }}
+                        />
+                        <div className="mt-4 text-sm text-gray-400">
+                            Last modified: {new Date(note.lastModified).toLocaleString()}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+      )}
 
       {/* NOTE MODAL */}
       {showNoteModal && (
@@ -1100,8 +1220,7 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
         </>
       )}
       
-      {/* PDF DRAWER (Unchanged) */}
-      {/* ... */}
+      {/* PDF DRAWER */}
       {showPdfDrawer && (
           <>
           <div className="fixed inset-0 bg-black/50 z-[60] transition-opacity" onClick={() => setShowPdfDrawer(false)}></div>
@@ -1146,10 +1265,14 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                    </div>
                </div>
                <div className="p-6 border-t border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50">
-                    <button onClick={handlePrint} className="w-full py-4 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 shadow-lg shadow-emerald-200 dark:shadow-none flex items-center justify-center gap-2 transition transform active:scale-95">
-                        <Download size={20}/> Tải xuống PDF
+                    <button 
+                        onClick={handleExportPDF} 
+                        disabled={isExporting}
+                        className="w-full py-4 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 shadow-lg shadow-emerald-200 dark:shadow-none flex items-center justify-center gap-2 transition transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isExporting ? <Loader2 className="animate-spin" size={20}/> : <Download size={20}/>} {isExporting ? 'Đang tạo PDF...' : 'Tải xuống PDF'}
                     </button>
-                    <p className="text-[10px] text-center mt-2 text-gray-400">Trình duyệt sẽ mở hộp thoại in, hãy chọn "Save as PDF".</p>
+                    <p className="text-[10px] text-center mt-2 text-gray-400">File sẽ được tải xuống trực tiếp.</p>
                </div>
           </div>
           </>
