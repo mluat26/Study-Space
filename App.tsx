@@ -32,6 +32,7 @@ const IconPicker = ({ selected, onSelect }: { selected: string, onSelect: (i: st
 const SubjectDrawer = ({ isOpen, onClose, onSave, lang, initialData }: any) => {
     const [name, setName] = useState('');
     const [desc, setDesc] = useState('');
+    const [createdAt, setCreatedAt] = useState('');
     
     // Color Logic
     const [selectedColor, setSelectedColor] = useState('bg-blue-500'); 
@@ -54,6 +55,8 @@ const SubjectDrawer = ({ isOpen, onClose, onSave, lang, initialData }: any) => {
                 setName(initialData.name);
                 setDesc(initialData.description);
                 setIcon(initialData.icon);
+                // Extract YYYY-MM-DD for date input
+                setCreatedAt(initialData.createdAt ? new Date(initialData.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
                 
                 // Check if color is hex or class
                 if (initialData.color.startsWith('#')) {
@@ -69,6 +72,7 @@ const SubjectDrawer = ({ isOpen, onClose, onSave, lang, initialData }: any) => {
             } else {
                 setName('');
                 setDesc('');
+                setCreatedAt(new Date().toISOString().split('T')[0]);
                 setSelectedColor('bg-blue-500');
                 setShowCustomColor(false);
                 setCustomHex('#3b82f6');
@@ -89,7 +93,8 @@ const SubjectDrawer = ({ isOpen, onClose, onSave, lang, initialData }: any) => {
                 description: desc, 
                 color: finalColor, 
                 icon,
-                createdAt: initialData ? initialData.createdAt : new Date().toISOString()
+                // Ensure we save as ISO string, preserving time if possible or defaulting to T00:00:00
+                createdAt: createdAt ? new Date(createdAt).toISOString() : new Date().toISOString()
             });
             onClose();
         }
@@ -114,6 +119,10 @@ const SubjectDrawer = ({ isOpen, onClose, onSave, lang, initialData }: any) => {
                 <div>
                     <label className="block text-sm font-semibold text-gray-700 dark:text-slate-300 mb-2">{t.desc}</label>
                     <input value={desc} onChange={e => setDesc(e.target.value)} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none transition dark:bg-slate-950 dark:text-white" placeholder="..." />
+                </div>
+                <div>
+                    <label className="block text-sm font-semibold text-gray-700 dark:text-slate-300 mb-2">Ngày tạo</label>
+                    <input type="date" value={createdAt} onChange={e => setCreatedAt(e.target.value)} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none transition dark:bg-slate-950 dark:text-white" />
                 </div>
 
                 <div>

@@ -201,13 +201,16 @@ const Dashboard: React.FC<DashboardProps> = ({ subjects, tasks, notes = [], reso
                                         >
                                             <Archive size={16} />
                                         </button>
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); if(window.confirm(t.deleteConfirm)) onDeleteSubject(subject.id); }}
-                                            className="p-1.5 text-white/60 hover:text-white rounded-lg hover:bg-white/10 transition"
-                                            title="Xóa"
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
+                                        {/* Only show delete button if archived (Storage) */}
+                                        {activeTab === 'archived' && (
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); if(window.confirm(t.deleteConfirm)) onDeleteSubject(subject.id); }}
+                                                className="p-1.5 text-white/60 hover:text-white rounded-lg hover:bg-white/10 transition"
+                                                title="Xóa vĩnh viễn"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
 
@@ -306,15 +309,17 @@ const Dashboard: React.FC<DashboardProps> = ({ subjects, tasks, notes = [], reso
                                             >
                                                 <Archive size={18} />
                                             </button>
-                                            <button 
-                                                onClick={(e) => { 
-                                                    e.stopPropagation(); 
-                                                    if(window.confirm(t.deleteConfirm)) onDeleteSubject(subject.id); 
-                                                }}
-                                                className="p-2 text-gray-400 hover:text-red-500 transition"
-                                            >
-                                                <Trash2 size={18} />
-                                            </button>
+                                            {activeTab === 'archived' && (
+                                                <button 
+                                                    onClick={(e) => { 
+                                                        e.stopPropagation(); 
+                                                        if(window.confirm(t.deleteConfirm)) onDeleteSubject(subject.id); 
+                                                    }}
+                                                    className="p-2 text-gray-400 hover:text-red-500 transition"
+                                                >
+                                                    <Trash2 size={18} />
+                                                </button>
+                                            )}
                                         </div>
                                     </td>
                                 </tr>
