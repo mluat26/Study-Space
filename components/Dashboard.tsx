@@ -44,6 +44,16 @@ const Dashboard: React.FC<DashboardProps> = ({ subjects, tasks, notes = [], reso
   });
 
   const renderIcon = (iconName: string, className: string) => {
+      if (iconName.startsWith('<svg')) {
+          // Extract width/height if needed or just let container handle it, 
+          // but usually svg string needs container. Dashboard passes specific classes.
+          // We can strip classes from SVG string and apply ours or wrap it.
+          // Simplest is wrapping.
+          return <div className={className} dangerouslySetInnerHTML={{ __html: iconName }} />;
+      }
+      if (iconName.startsWith('data:image') || iconName.startsWith('http')) {
+          return <img src={iconName} className={`${className} object-cover rounded-md`} alt="icon" />;
+      }
       const IconComp = ICONS[iconName] || Book;
       return <IconComp className={className} />;
   }
@@ -177,13 +187,13 @@ const Dashboard: React.FC<DashboardProps> = ({ subjects, tasks, notes = [], reso
                             style={cardStyle}
                         >
                             {/* Watermark Icon */}
-                            <div className="absolute -right-6 -bottom-6 opacity-10 transform rotate-12 transition-transform group-hover:scale-110">
+                            <div className="absolute -right-6 -bottom-6 opacity-10 transform rotate-12 transition-transform group-hover:scale-110 pointer-events-none">
                                 {renderIcon(subject.icon, "w-40 h-40 text-white")}
                             </div>
 
                             <div className="p-5 flex flex-col flex-1 relative z-10">
                                 <div className="flex justify-between items-start mb-4">
-                                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white/90 bg-white/20 backdrop-blur-sm shadow-inner`}>
+                                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white/90 bg-white/20 backdrop-blur-sm shadow-inner overflow-hidden`}>
                                         {renderIcon(subject.icon, "w-6 h-6")}
                                     </div>
                                     <div className="flex gap-1">
@@ -273,7 +283,7 @@ const Dashboard: React.FC<DashboardProps> = ({ subjects, tasks, notes = [], reso
                                 <tr key={subject.id} className="hover:bg-gray-50 dark:hover:bg-slate-800 transition cursor-pointer" onClick={() => onSelectSubject(subject.id)}>
                                     <td className="px-6 py-4">
                                         <div className="flex items-center gap-3">
-                                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white ${iconClass}`} style={iconStyle}>
+                                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white overflow-hidden ${iconClass}`} style={iconStyle}>
                                                 {renderIcon(subject.icon, "w-4 h-4")}
                                             </div>
                                             <span className="font-semibold text-gray-800 dark:text-white">{subject.name}</span>

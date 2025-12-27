@@ -696,6 +696,9 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       if (subject.icon.startsWith('<svg')) {
           return <div className="text-white" style={{width: 300, height: 300, opacity: 0.2}} dangerouslySetInnerHTML={{ __html: subject.icon }} />;
       }
+      if (subject.icon.startsWith('data:image') || subject.icon.startsWith('http')) {
+          return <img src={subject.icon} className="w-[300px] h-[300px] object-cover opacity-20 rounded-full" alt="Subject Icon" />;
+      }
       const IconComp = ICONS[subject.icon] || ICONS['Book'];
       return <IconComp size={300} className="text-white" />;
   }

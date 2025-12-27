@@ -1,38 +1,162 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Subject, Task, Note, Resource, Language, TrashItem } from './types';
 import { INITIAL_SUBJECTS, INITIAL_TASKS, INITIAL_NOTES, INITIAL_RESOURCES, COLORS, ICONS, TRANSLATIONS } from './constants';
 import Dashboard from './components/Dashboard';
 import SubjectDetail from './components/SubjectDetail';
 import SearchManager from './components/SearchManager';
 import { DataExportImport } from './components/DataExportImport';
-import { LayoutGrid, Search, Moon, Sun, Database, HardDrive, Download, X, GraduationCap, BookOpen, Menu, ChevronLeft, ChevronRight, Trash2, MoreHorizontal, ArrowUp, ArrowDown, PenSquare, GripVertical, ListFilter, Plus, CheckCircle, FileText, Palette, AlertTriangle, RefreshCcw, Upload, ChevronDown, RotateCcw, Link as LinkIcon, FileAudio, Maximize2, Archive, RotateCw, AlertCircle, UploadCloud } from 'lucide-react';
+import { LayoutGrid, Search, Moon, Sun, Database, HardDrive, Download, X, GraduationCap, BookOpen, Menu, ChevronLeft, ChevronRight, Trash2, MoreHorizontal, ArrowUp, ArrowDown, PenSquare, GripVertical, ListFilter, Plus, CheckCircle, FileText, Palette, AlertTriangle, RefreshCcw, Upload, ChevronDown, RotateCcw, Link as LinkIcon, FileAudio, Maximize2, Archive, RotateCw, AlertCircle, UploadCloud, Image as ImageIcon, Crop } from 'lucide-react';
 import { dbGet, dbSet, dbClear, getUsageEstimate } from './utils/indexedDB';
+import Cropper from 'react-easy-crop';
+
+// --- Image Cropper Helper ---
+const createImage = (url: string): Promise<HTMLImageElement> =>
+  new Promise((resolve, reject) => {
+    const image = new Image()
+    image.addEventListener('load', () => resolve(image))
+    image.addEventListener('error', (error) => reject(error))
+    image.src = url
+  })
+
+async function getCroppedImg(imageSrc: string, pixelCrop: any): Promise<string> {
+  const image = await createImage(imageSrc)
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return ''
+
+  canvas.width = pixelCrop.width
+  canvas.height = pixelCrop.height
+
+  ctx.drawImage(
+    image,
+    pixelCrop.x,
+    pixelCrop.y,
+    pixelCrop.width,
+    pixelCrop.height,
+    0,
+    0,
+    pixelCrop.width,
+    pixelCrop.height
+  )
+
+  // As Base64 string (JPEG for smaller size, or PNG for transparency)
+  return canvas.toDataURL('image/png', 0.9); 
+}
+
+// --- Components ---
+
+const ImageCropperModal = ({ imageSrc, onCancel, onCropComplete }: { imageSrc: string, onCancel: () => void, onCropComplete: (croppedImg: string) => void }) => {
+    const [crop, setCrop] = useState({ x: 0, y: 0 })
+    const [zoom, setZoom] = useState(1)
+    const [croppedAreaPixels, setCroppedAreaPixels] = useState(null)
+
+    const onCropChange = (crop: { x: number; y: number }) => {
+        setCrop(crop)
+    }
+
+    const onZoomChange = (zoom: number) => {
+        setZoom(zoom)
+    }
+
+    const onCropCompleteInternal = useCallback((croppedArea: any, croppedAreaPixels: any) => {
+        setCroppedAreaPixels(croppedAreaPixels)
+    }, [])
+
+    const handleSave = async () => {
+        try {
+            const croppedImage = await getCroppedImg(imageSrc, croppedAreaPixels)
+            onCropComplete(croppedImage)
+        } catch (e) {
+            console.error(e)
+            alert("Lỗi khi cắt ảnh")
+        }
+    }
+
+    return (
+        <div className="fixed inset-0 z-[200] bg-black/80 flex flex-col items-center justify-center p-4">
+             <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl flex flex-col h-[500px]">
+                 <div className="p-4 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-950">
+                     <h3 className="font-bold text-gray-800 dark:text-white flex items-center gap-2"><Crop size={18}/> Cắt ảnh (Vuông)</h3>
+                     <button onClick={onCancel}><X size={20} className="text-gray-400"/></button>
+                 </div>
+                 <div className="relative flex-1 bg-gray-900">
+                     <Cropper
+                        image={imageSrc}
+                        crop={crop}
+                        zoom={zoom}
+                        aspect={1}
+                        onCropChange={onCropChange}
+                        onCropComplete={onCropCompleteInternal}
+                        onZoomChange={onZoomChange}
+                     />
+                 </div>
+                 <div className="p-4 bg-white dark:bg-slate-900 border-t border-gray-100 dark:border-slate-800 space-y-4">
+                     <div className="flex items-center gap-4">
+                         <span className="text-xs font-bold text-gray-500">Zoom</span>
+                         <input 
+                            type="range" 
+                            value={zoom} 
+                            min={1} 
+                            max={3} 
+                            step={0.1} 
+                            onChange={(e) => setZoom(Number(e.target.value))}
+                            className="flex-1 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                         />
+                     </div>
+                     <div className="flex gap-3">
+                         <button onClick={onCancel} className="flex-1 py-2 rounded-xl text-gray-600 dark:text-gray-300 font-medium hover:bg-gray-100 dark:hover:bg-slate-800">Hủy</button>
+                         <button onClick={handleSave} className="flex-1 py-2 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 shadow-md">Xong</button>
+                     </div>
+                 </div>
+             </div>
+        </div>
+    )
+}
 
 const IconPicker = ({ selected, onSelect }: { selected: string, onSelect: (i: string) => void }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const [cropImage, setCropImage] = useState<string | null>(null);
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
-            if (file.type !== 'image/svg+xml') {
-                alert('Vui lòng chọn file SVG');
-                return;
-            }
             const reader = new FileReader();
             reader.onload = (ev) => {
-                const svgContent = ev.target?.result as string;
-                // Simple validation check
-                if (svgContent.includes('<svg')) {
-                    onSelect(svgContent);
+                const result = ev.target?.result as string;
+                if (file.type === 'image/svg+xml') {
+                     // SVG Direct use
+                     onSelect(result);
+                } else {
+                     // Image needs cropping
+                     setCropImage(result);
                 }
             };
-            reader.readAsText(file);
+            reader.readAsDataURL(file); // Use DataURL for both image preview and SVG text parsing fallback logic if needed, but for crop we need DataURL
+            
+            // Note: For SVG pure text, readAsText is usually better, but if user uploads via this button we assume generic handling.
+            // If specific SVG logic needed:
+            if (file.type === 'image/svg+xml') {
+                const textReader = new FileReader();
+                textReader.onload = (ev) => {
+                     const text = ev.target?.result as string;
+                     if(text.includes('<svg')) onSelect(text);
+                }
+                textReader.readAsText(file);
+                return; // Stop here for SVG
+            }
         }
     };
 
-    const isCustomSvg = selected.startsWith('<svg');
+    const handleCropFinished = (croppedBase64: string) => {
+        onSelect(croppedBase64);
+        setCropImage(null);
+    };
+
+    const isCustom = selected.startsWith('<svg') || selected.startsWith('data:image') || selected.startsWith('http');
+    const isImage = selected.startsWith('data:image') || selected.startsWith('http');
 
     return (
+        <>
         <div className="grid grid-cols-6 gap-2 mt-2">
             {Object.keys(ICONS).map(key => {
                 const Icon = ICONS[key];
@@ -46,27 +170,45 @@ const IconPicker = ({ selected, onSelect }: { selected: string, onSelect: (i: st
                     </button>
                 )
             })}
+            
+            {/* Custom Upload Button */}
             <button
                 onClick={() => fileInputRef.current?.click()}
-                className={`p-2 rounded-lg flex items-center justify-center transition border-2 border-dashed ${isCustomSvg ? 'bg-emerald-50 border-emerald-500 text-emerald-600' : 'border-gray-300 dark:border-slate-600 hover:border-emerald-500 text-gray-400 hover:text-emerald-500'}`}
-                title="Upload SVG Icon"
+                className={`p-2 rounded-lg flex items-center justify-center transition border-2 border-dashed relative ${isCustom ? 'bg-emerald-50 border-emerald-500 text-emerald-600' : 'border-gray-300 dark:border-slate-600 hover:border-emerald-500 text-gray-400 hover:text-emerald-500'}`}
+                title="Upload Icon (SVG, PNG, JPG)"
             >
-                <UploadCloud size={20} />
+                <Plus size={14} className="absolute top-1 right-1 bg-white dark:bg-slate-800 rounded-full border border-current"/>
+                <ImageIcon size={20} />
             </button>
             <input 
                 type="file" 
                 ref={fileInputRef} 
-                accept=".svg" 
+                accept=".svg, .png, .jpg, .jpeg" 
                 className="hidden" 
                 onChange={handleFileUpload}
             />
-            {isCustomSvg && (
+            
+            {isCustom && (
                 <div className="col-span-6 mt-2 p-2 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400">
                     <CheckCircle size={16}/> Đã chọn icon tùy chỉnh
-                    <div className="w-6 h-6 ml-auto" dangerouslySetInnerHTML={{ __html: selected }} />
+                    <div className="w-8 h-8 ml-auto rounded-md overflow-hidden bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-800 flex items-center justify-center">
+                        {isImage ? (
+                            <img src={selected} alt="Custom" className="w-full h-full object-cover"/>
+                        ) : (
+                            <div className="w-6 h-6" dangerouslySetInnerHTML={{ __html: selected }} />
+                        )}
+                    </div>
                 </div>
             )}
         </div>
+        {cropImage && (
+            <ImageCropperModal 
+                imageSrc={cropImage} 
+                onCancel={() => { setCropImage(null); if(fileInputRef.current) fileInputRef.current.value = ''; }} 
+                onCropComplete={handleCropFinished} 
+            />
+        )}
+        </>
     )
 }
 
@@ -214,7 +356,7 @@ const SubjectDrawer = ({ isOpen, onClose, onSave, lang, initialData }: any) => {
     )
 }
 
-const StorageView = ({ subjects, tasks, notes, resources, trash, onDeleteSubject, onDeleteTask, onDeleteNote, onDeleteResource, onRestore, onPermanentDelete, onResetData, onOpenExport, onOpenImport }: any) => {
+const StorageView = ({ subjects, tasks, notes, resources, trash, onDeleteSubject, onDeleteTask, onDeleteNote, onDeleteResource, onRestore, onPermanentDelete, onResetData, onOpenExport, onOpenImport, onEmptyTrash }: any) => {
     const [activeTab, setActiveTab] = useState<'overview' | 'subjects' | 'tasks' | 'notes' | 'trash'>('overview');
     const [usage, setUsage] = useState({ usage: 0, quota: 0 });
 
@@ -310,7 +452,17 @@ const StorageView = ({ subjects, tasks, notes, resources, trash, onDeleteSubject
     return (
         <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-950 p-8 overflow-y-auto transition-colors">
              <div className="max-w-5xl mx-auto w-full">
-                <h2 className="text-3xl font-bold text-gray-800 dark:text-white mb-6">Quản lý Lưu trữ</h2>
+                <div className="flex justify-between items-end mb-6">
+                    <h2 className="text-3xl font-bold text-gray-800 dark:text-white">Quản lý Lưu trữ</h2>
+                    {activeTab === 'trash' && trash.length > 0 && (
+                        <button 
+                            onClick={onEmptyTrash} 
+                            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl font-bold transition shadow-lg shadow-red-200 dark:shadow-none animate-in fade-in"
+                        >
+                            <Trash2 size={18}/> Dọn sạch thùng rác
+                        </button>
+                    )}
+                </div>
                 
                 <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
                     {tabs.map(t => (
@@ -426,6 +578,9 @@ const QuickCreateDrawer = ({ subjects, isOpen, onClose, onSave }: { subjects: Su
                                     if (s.icon.startsWith('<svg')) {
                                         return <div className="w-[18px] h-[18px]" dangerouslySetInnerHTML={{ __html: s.icon }} />
                                     }
+                                    if (s.icon.startsWith('data:image') || s.icon.startsWith('http')) {
+                                        return <img src={s.icon} className="w-[18px] h-[18px] object-cover rounded-sm" alt="icon"/>;
+                                    }
                                     const IconComp = ICONS[s.icon] || BookOpen;
                                     return <IconComp size={18} />;
                                   };
@@ -438,7 +593,7 @@ const QuickCreateDrawer = ({ subjects, isOpen, onClose, onSave }: { subjects: Su
                                       onClick={() => setSelectedSubjectId(s.id)}
                                       className={`flex flex-col items-center justify-center gap-2 p-3 rounded-xl transition-all group ${isSelected ? 'bg-blue-50 dark:bg-blue-900/30' : 'bg-gray-50 dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700'}`}
                                   >
-                                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white shadow-sm flex-shrink-0 ${bgClass} ${isSelected ? 'ring-2 ring-blue-500 ring-offset-2 dark:ring-offset-slate-900' : ''}`} style={bgStyle}>
+                                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white shadow-sm flex-shrink-0 overflow-hidden ${bgClass} ${isSelected ? 'ring-2 ring-blue-500 ring-offset-2 dark:ring-offset-slate-900' : ''}`} style={bgStyle}>
                                           {renderIcon()}
                                       </div>
                                       <span className={`text-xs font-bold truncate w-full text-center ${isSelected ? 'text-blue-700 dark:text-blue-300' : 'text-gray-600 dark:text-slate-300'}`}>
@@ -623,6 +778,12 @@ const App: React.FC = () => {
         relatedData
     };
     setTrash(prev => [trashItem, ...prev]);
+  };
+
+  const handleEmptyTrash = () => {
+      if (window.confirm("Bạn có chắc chắn muốn xóa sạch thùng rác? Hành động này không thể hoàn tác.")) {
+          setTrash([]);
+      }
   };
 
   const handleDeleteSubject = (id: string) => {
@@ -888,6 +1049,10 @@ const App: React.FC = () => {
                    if (subject.icon.startsWith('<svg')) {
                        return <div className="w-[18px] h-[18px]" dangerouslySetInnerHTML={{ __html: subject.icon }} />
                    }
+                   // Handle DataURL/Image URL
+                   if (subject.icon.startsWith('data:image') || subject.icon.startsWith('http')) {
+                       return <img src={subject.icon} className="w-[18px] h-[18px] object-cover rounded-sm" alt="icon" />;
+                   }
                    const IconComp = ICONS[subject.icon] || BookOpen;
                    return <IconComp size={18} />;
                 };
@@ -945,6 +1110,9 @@ const App: React.FC = () => {
                          if (subject.icon.startsWith('<svg')) {
                              return <div className="w-[18px] h-[18px]" dangerouslySetInnerHTML={{ __html: subject.icon }} />
                          }
+                         if (subject.icon.startsWith('data:image') || subject.icon.startsWith('http')) {
+                             return <img src={subject.icon} className="w-[18px] h-[18px] object-cover rounded-sm" alt="icon"/>;
+                         }
                          const IconComp = ICONS[subject.icon] || BookOpen;
                          return <IconComp size={18} />;
                       };
@@ -966,7 +1134,7 @@ const App: React.FC = () => {
         ) : currentView === 'search' ? (
            <SearchManager tasks={tasks} notes={notes} subjects={subjects} onSelectSubject={handleViewChange} onSelectNote={handleDirectOpenNote}/>
         ) : currentView === 'storage' ? (
-            <StorageView subjects={subjects} tasks={tasks} notes={notes} resources={resources} trash={trash} onDeleteSubject={handleDeleteSubject} onDeleteTask={handleDeleteTask} onDeleteNote={handleDeleteNote} onDeleteResource={handleDeleteResource} onRestore={handleRestoreFromTrash} onPermanentDelete={handlePermanentDelete} onResetData={handleResetData} onOpenExport={() => { setTransferMode('export'); setShowDataTransfer(true); }} onOpenImport={() => { setTransferMode('import'); setShowDataTransfer(true); }} />
+            <StorageView subjects={subjects} tasks={tasks} notes={notes} resources={resources} trash={trash} onDeleteSubject={handleDeleteSubject} onDeleteTask={handleDeleteTask} onDeleteNote={handleDeleteNote} onDeleteResource={handleDeleteResource} onRestore={handleRestoreFromTrash} onPermanentDelete={handlePermanentDelete} onResetData={handleResetData} onOpenExport={() => { setTransferMode('export'); setShowDataTransfer(true); }} onOpenImport={() => { setTransferMode('import'); setShowDataTransfer(true); }} onEmptyTrash={handleEmptyTrash}/>
         ) : activeSubject ? (
           <SubjectDetail subject={activeSubject} tasks={tasks.filter(t => t.subjectId === activeSubject.id)} notes={notes.filter(n => n.subjectId === activeSubject.id)} resources={resources.filter(r => r.subjectId === activeSubject.id)} onAddTask={handleAddTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onAddNote={handleAddNote} onUpdateNote={handleUpdateNote} onDeleteNote={handleDeleteNote} onAddResource={handleAddResource} onDeleteResource={handleDeleteResource} onBack={() => handleViewChange('dashboard')} onEditSubject={() => openEditModal(activeSubject)} onArchiveSubject={() => handleArchiveSubject(activeSubject.id)} lang={lang} initialOpenNoteId={openedNoteId} isCreatingNote={isCreatingNote} onMinimize={handleMinimizeNote} onNoteActive={(noteId) => setActiveNoteId(noteId)} />
         ) : (
