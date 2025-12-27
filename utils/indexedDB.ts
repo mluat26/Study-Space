@@ -81,3 +81,12 @@ export const getUsageEstimate = async (): Promise<{ usage: number; quota: number
     }
     return { usage: 0, quota: 0 };
 }
+
+export const calculateObjectSize = (obj: any): number => {
+    try {
+        const str = JSON.stringify(obj);
+        return new Blob([str]).size;
+    } catch (e) {
+        return 0;
+    }
+}

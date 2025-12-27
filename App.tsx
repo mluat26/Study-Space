@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Subject, Task, Note, Resource, Language, TrashItem } from './types';
 import { INITIAL_SUBJECTS, INITIAL_TASKS, INITIAL_NOTES, INITIAL_RESOURCES, COLORS, ICONS, TRANSLATIONS } from './constants';
 import Dashboard from './components/Dashboard';
 import SubjectDetail from './components/SubjectDetail';
 import SearchManager from './components/SearchManager';
 import { DataExportImport } from './components/DataExportImport';
-import { LayoutGrid, Search, Moon, Sun, Database, HardDrive, Download, X, GraduationCap, BookOpen, Menu, ChevronLeft, ChevronRight, Trash2, MoreHorizontal, ArrowUp, ArrowDown, PenSquare, GripVertical, ListFilter, Plus, CheckCircle, FileText, Palette, AlertTriangle, RefreshCcw, Upload, ChevronDown, RotateCcw, Link as LinkIcon, FileAudio, Maximize2, Archive, RotateCw, AlertCircle, UploadCloud, Image as ImageIcon, Crop } from 'lucide-react';
-import { dbGet, dbSet, dbClear, getUsageEstimate } from './utils/indexedDB';
+import { LayoutGrid, Search, Moon, Sun, Database, HardDrive, Download, X, GraduationCap, BookOpen, Menu, ChevronLeft, ChevronRight, Trash2, MoreHorizontal, ArrowUp, ArrowDown, PenSquare, GripVertical, ListFilter, Plus, CheckCircle, FileText, Palette, AlertTriangle, RefreshCcw, Upload, ChevronDown, RotateCcw, Link as LinkIcon, FileAudio, Maximize2, Archive, RotateCw, AlertCircle, UploadCloud, Image as ImageIcon, Crop, FileBox, Music, Eye } from 'lucide-react';
+import { dbGet, dbSet, dbClear, getUsageEstimate, calculateObjectSize } from './utils/indexedDB';
 import Cropper from 'react-easy-crop';
 
 // --- Image Cropper Helper ---
@@ -356,23 +356,149 @@ const SubjectDrawer = ({ isOpen, onClose, onSave, lang, initialData }: any) => {
     )
 }
 
-const StorageView = ({ subjects, tasks, notes, resources, trash, onDeleteSubject, onDeleteTask, onDeleteNote, onDeleteResource, onRestore, onPermanentDelete, onResetData, onOpenExport, onOpenImport, onEmptyTrash }: any) => {
-    const [activeTab, setActiveTab] = useState<'overview' | 'subjects' | 'tasks' | 'notes' | 'trash'>('overview');
-    const [usage, setUsage] = useState({ usage: 0, quota: 0 });
+// Type definitions for file management
+interface ManagedFile {
+    id: string;
+    parentId: string;
+    parentType: 'note' | 'resource';
+    parentName: string;
+    name: string;
+    type: 'Image' | 'Audio' | 'File' | 'Link';
+    size: number;
+    src: string; // The URL or Base64 string to be used for deletion identification
+    createdAt?: string;
+}
 
-    useEffect(() => {
-        const updateUsage = async () => {
-            const data = await getUsageEstimate();
-            setUsage(data);
+const StorageView = ({ 
+    subjects, tasks, notes, resources, trash, 
+    onDeleteSubject, onDeleteTask, onDeleteNote, onDeleteResource, onDeleteEmbeddedFile,
+    onRestore, onPermanentDelete, onResetData, onOpenExport, onOpenImport, onEmptyTrash 
+}: any) => {
+    const [activeTab, setActiveTab] = useState<'overview' | 'subjects' | 'tasks' | 'notes' | 'files' | 'trash'>('overview');
+    const [browserQuota, setBrowserQuota] = useState<{ usage: number, quota: number }>({ usage: 0, quota: 0 });
+    
+    // Accurate Size Calculation
+    const usageStats = useMemo(() => {
+        const subjectsSize = calculateObjectSize(subjects);
+        const tasksSize = calculateObjectSize(tasks);
+        const notesSize = calculateObjectSize(notes);
+        const resourcesSize = calculateObjectSize(resources);
+        const trashSize = calculateObjectSize(trash);
+        const totalSize = subjectsSize + tasksSize + notesSize + resourcesSize + trashSize;
+        
+        return {
+            subjects: subjectsSize,
+            tasks: tasksSize,
+            notes: notesSize,
+            resources: resourcesSize,
+            trash: trashSize,
+            total: totalSize
         };
-        updateUsage();
-        const interval = setInterval(updateUsage, 5000);
-        return () => clearInterval(interval);
-    }, [subjects, tasks, notes]);
+    }, [subjects, tasks, notes, resources, trash]);
 
-    const percent = usage.quota > 0 ? (usage.usage / usage.quota) * 100 : 0;
-    const usedMB = (usage.usage / 1024 / 1024).toFixed(2);
-    const quotaDisplay = (usage.quota / 1024 / 1024 / 1024).toFixed(1) + ' GB';
+    // Browser Quota Polling (For reference)
+    useEffect(() => {
+        const updateEstimate = async () => {
+            const data = await getUsageEstimate();
+            setBrowserQuota(data);
+        };
+        updateEstimate();
+        const interval = setInterval(updateEstimate, 10000);
+        return () => clearInterval(interval);
+    }, []);
+
+    // File Extraction Logic
+    const allFiles = useMemo<ManagedFile[]>(() => {
+        const files: ManagedFile[] = [];
+
+        // 1. From Resources
+        resources.forEach(r => {
+            let size = 0;
+            if (r.url.startsWith('data:')) {
+                size = r.url.length; // Approximate size for base64
+            } else {
+                 size = 500; // Placeholder for links
+            }
+            // Better approximation for base64: length * 3/4
+            if (r.url.startsWith('data:')) size = Math.round(size * 0.75);
+
+            files.push({
+                id: r.id,
+                parentId: r.subjectId,
+                parentType: 'resource',
+                parentName: 'Resource Item',
+                name: r.title,
+                type: r.type === 'Audio' ? 'Audio' : (r.type === 'Link' ? 'Link' : 'File'),
+                size: size,
+                src: r.id, // ID is enough for deletion
+                createdAt: undefined
+            });
+        });
+
+        // 2. From Notes (Embedded)
+        notes.forEach(n => {
+            if (!n.content) return;
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(n.content, 'text/html');
+
+            // Images
+            doc.querySelectorAll('img').forEach((img, idx) => {
+                const src = img.src;
+                if (src && src.startsWith('data:')) {
+                    const size = Math.round(src.length * 0.75);
+                    files.push({
+                        id: `${n.id}_img_${idx}`,
+                        parentId: n.id,
+                        parentType: 'note',
+                        parentName: n.title,
+                        name: `Embedded Image ${idx + 1}`,
+                        type: 'Image',
+                        size: size,
+                        src: src
+                    });
+                }
+            });
+
+            // Audio divs
+            doc.querySelectorAll('.smartstudy-audio-data').forEach((div, idx) => {
+                const src = div.textContent || (div as HTMLElement).innerText;
+                const name = div.getAttribute('data-name') || `Audio Recording ${idx + 1}`;
+                if (src && src.startsWith('data:')) {
+                     const size = Math.round(src.length * 0.75);
+                     files.push({
+                         id: `${n.id}_audio_${idx}`,
+                         parentId: n.id,
+                         parentType: 'note',
+                         parentName: n.title,
+                         name: name,
+                         type: 'Audio',
+                         size: size,
+                         src: src
+                     });
+                }
+            });
+        });
+
+        return files.sort((a, b) => b.size - a.size);
+    }, [notes, resources]);
+
+    const formatSize = (bytes: number) => {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    };
+
+    const handleDeleteFile = (file: ManagedFile) => {
+        if (window.confirm(`Bạn có chắc muốn xóa file "${file.name}"? Hành động này không thể hoàn tác.`)) {
+            if (file.parentType === 'resource') {
+                onDeleteResource(file.id);
+            } else if (file.parentType === 'note') {
+                onDeleteEmbeddedFile(file.parentId, file.src, file.type);
+            }
+        }
+    };
 
     const handleDeleteAll = async () => {
         if (window.confirm('CẢNH BÁO: Hành động này sẽ xóa toàn bộ dữ liệu của bạn và không thể khôi phục. Bạn có chắc chắn không?')) {
@@ -382,20 +508,15 @@ const StorageView = ({ subjects, tasks, notes, resources, trash, onDeleteSubject
         }
     }
 
-    const getSize = (item: any) => {
-        const str = JSON.stringify(item);
-        const bytes = new Blob([str]).size;
-        return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
-    }
-
     const getSubjectName = (id: string) => subjects.find((s: any) => s.id === id)?.name || 'Unknown';
 
     const tabs = [
-        { id: 'overview', label: 'Tổng quan' },
-        { id: 'subjects', label: 'Môn học' },
-        { id: 'tasks', label: 'Công việc' },
-        { id: 'notes', label: 'Ghi chú' },
-        { id: 'trash', label: 'Thùng rác' },
+        { id: 'overview', label: 'Tổng quan', icon: HardDrive },
+        { id: 'files', label: 'Quản lý tập tin', icon: FileBox },
+        { id: 'subjects', label: 'Môn học', icon: BookOpen },
+        { id: 'tasks', label: 'Công việc', icon: CheckCircle },
+        { id: 'notes', label: 'Ghi chú', icon: FileText },
+        { id: 'trash', label: 'Thùng rác', icon: Trash2 },
     ];
 
     const renderTable = (data: any[], type: 'subject' | 'task' | 'note' | 'trash') => {
@@ -420,7 +541,7 @@ const StorageView = ({ subjects, tasks, notes, resources, trash, onDeleteSubject
                                     {type === 'subject' && item.isArchived && <span className="ml-2 px-2 py-0.5 bg-gray-100 dark:bg-slate-800 text-gray-500 text-[10px] rounded-full">Archived</span>}
                                 </td>
                                 {type !== 'subject' && type !== 'trash' && <td className="px-6 py-4 text-sm text-gray-500 dark:text-slate-400">{getSubjectName(item.subjectId)}</td>}
-                                <td className="px-6 py-4 text-sm font-mono text-gray-500 dark:text-slate-400">{getSize(type === 'trash' ? item.data : item)}</td>
+                                <td className="px-6 py-4 text-sm font-mono text-gray-500 dark:text-slate-400">{formatSize(calculateObjectSize(type === 'trash' ? item.data : item))}</td>
                                 <td className="px-6 py-4 text-right">
                                     {type === 'trash' ? (
                                         <div className="flex justify-end gap-2">
@@ -451,9 +572,12 @@ const StorageView = ({ subjects, tasks, notes, resources, trash, onDeleteSubject
 
     return (
         <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-950 p-8 overflow-y-auto transition-colors">
-             <div className="max-w-5xl mx-auto w-full">
+             <div className="max-w-6xl mx-auto w-full">
                 <div className="flex justify-between items-end mb-6">
-                    <h2 className="text-3xl font-bold text-gray-800 dark:text-white">Quản lý Lưu trữ</h2>
+                    <div>
+                        <h2 className="text-3xl font-bold text-gray-800 dark:text-white">Quản lý Lưu trữ</h2>
+                        <p className="text-gray-500 dark:text-slate-400 mt-1">Quản lý dung lượng và dữ liệu ứng dụng.</p>
+                    </div>
                     {activeTab === 'trash' && trash.length > 0 && (
                         <button 
                             onClick={onEmptyTrash} 
@@ -469,44 +593,111 @@ const StorageView = ({ subjects, tasks, notes, resources, trash, onDeleteSubject
                         <button
                             key={t.id}
                             onClick={() => setActiveTab(t.id as any)}
-                            className={`px-4 py-2 rounded-xl font-medium whitespace-nowrap transition ${activeTab === t.id ? 'bg-emerald-600 text-white shadow-md' : 'bg-white dark:bg-slate-900 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
+                            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium whitespace-nowrap transition ${activeTab === t.id ? 'bg-emerald-600 text-white shadow-md' : 'bg-white dark:bg-slate-900 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
                         >
-                            {t.label}
+                            <t.icon size={18} /> {t.label}
                         </button>
                     ))}
                 </div>
 
                 {activeTab === 'overview' && (
-                    <div className="bg-white dark:bg-slate-900/60 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-slate-800 mb-8 backdrop-blur-sm animate-in fade-in zoom-in duration-200">
-                        <div className="flex items-center gap-6 mb-8">
-                            <div className="w-20 h-20 bg-emerald-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-                                <HardDrive size={40} />
-                            </div>
-                            <div className="flex-1">
-                                <div className="flex justify-between mb-2">
-                                    <h3 className="text-xl font-bold text-gray-800 dark:text-white">IndexedDB Storage</h3>
-                                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">{usedMB} MB / {quotaDisplay}</span>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in zoom-in duration-200">
+                        <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-slate-800 col-span-1 md:col-span-2">
+                            <div className="flex items-center gap-6 mb-8">
+                                <div className="w-20 h-20 bg-emerald-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                                    <HardDrive size={40} />
                                 </div>
-                                <div className="w-full bg-gray-100 dark:bg-slate-950 h-4 rounded-full overflow-hidden border border-gray-200 dark:border-slate-800">
-                                    <div className="bg-gradient-to-r from-emerald-400 to-emerald-600 h-full transition-all duration-500" style={{ width: `${Math.max(percent, 1)}%` }}></div>
+                                <div className="flex-1">
+                                    <div className="flex justify-between mb-2">
+                                        <h3 className="text-xl font-bold text-gray-800 dark:text-white">Tổng dung lượng sử dụng</h3>
+                                        <span className="text-emerald-600 dark:text-emerald-400 font-bold text-xl">{formatSize(usageStats.total)}</span>
+                                    </div>
+                                    <div className="w-full bg-gray-100 dark:bg-slate-950 h-4 rounded-full overflow-hidden border border-gray-200 dark:border-slate-800 relative">
+                                        <div className="absolute inset-0 bg-gray-100 dark:bg-slate-800 w-full h-full"></div>
+                                        <div className="bg-gradient-to-r from-emerald-400 to-emerald-600 h-full transition-all duration-500 relative z-10" style={{ width: `${Math.min((usageStats.total / (browserQuota.quota || 1)) * 100, 100)}%` }}></div>
+                                    </div>
+                                    <div className="flex justify-between mt-2 text-xs text-gray-400 dark:text-slate-500">
+                                        <span>Dữ liệu thực: {formatSize(usageStats.total)}</span>
+                                        <span>Quota trình duyệt: {formatSize(browserQuota.quota)}</span>
+                                    </div>
                                 </div>
-                                <p className="text-xs text-gray-400 dark:text-slate-500/70 mt-2">Dữ liệu được lưu trữ an toàn trên trình duyệt của bạn với dung lượng lớn.</p>
                             </div>
-                        </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                            <button onClick={onOpenExport} className="w-full flex items-center justify-center gap-2 bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-700 transition shadow-lg shadow-emerald-200 dark:shadow-none">
-                                <Download size={20} /> Xuất Dữ Liệu (Backup)
-                            </button>
                             
-                            <button onClick={onOpenImport} className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-200 dark:shadow-none">
-                                <Upload size={20} /> Nhập Dữ Liệu (Restore)
-                            </button>
-                        </div>
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+                                {Object.entries(usageStats).filter(([k]) => k !== 'total').map(([key, size]) => (
+                                    <div key={key} className="p-4 rounded-2xl bg-gray-50 dark:bg-slate-800/50 border border-gray-100 dark:border-slate-800 text-center">
+                                        <p className="text-xs font-bold text-gray-400 dark:text-slate-500 uppercase mb-1">{key}</p>
+                                        <p className="font-bold text-gray-800 dark:text-white">{formatSize(size as number)}</p>
+                                    </div>
+                                ))}
+                            </div>
 
-                        <button onClick={handleDeleteAll} className="w-full flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-900/50 px-6 py-3 rounded-xl font-bold hover:bg-red-100 dark:hover:bg-red-900/40 transition">
-                            <Trash2 size={20} /> Xóa toàn bộ dữ liệu
-                        </button>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <button onClick={onOpenExport} className="w-full flex items-center justify-center gap-2 bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-700 transition shadow-lg shadow-emerald-200 dark:shadow-none">
+                                    <Download size={20} /> Backup
+                                </button>
+                                
+                                <button onClick={onOpenImport} className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-200 dark:shadow-none">
+                                    <Upload size={20} /> Restore
+                                </button>
+
+                                <button onClick={handleDeleteAll} className="w-full flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-900/50 px-6 py-3 rounded-xl font-bold hover:bg-red-100 dark:hover:bg-red-900/40 transition">
+                                    <Trash2 size={20} /> Reset App
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'files' && (
+                    <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in duration-200">
+                        <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 border-b border-emerald-100 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-sm flex items-center gap-3">
+                            <AlertTriangle size={18}/>
+                            <span>Quản lý tất cả tập tin (ảnh, ghi âm, tài liệu) được lưu trữ trong ứng dụng. Xóa file tại đây sẽ xóa chúng khỏi ghi chú/tài liệu gốc.</span>
+                        </div>
+                        <table className="w-full text-left">
+                            <thead className="bg-gray-50 dark:bg-slate-950 border-b border-gray-100 dark:border-slate-800 text-xs font-bold text-gray-500 dark:text-slate-400 uppercase">
+                                <tr>
+                                    <th className="px-6 py-4">Tên tập tin</th>
+                                    <th className="px-6 py-4">Loại</th>
+                                    <th className="px-6 py-4">Nguồn (Ghi chú/Môn)</th>
+                                    <th className="px-6 py-4">Kích thước</th>
+                                    <th className="px-6 py-4 text-right">Hành động</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                                {allFiles.length === 0 ? (
+                                    <tr><td colSpan={5} className="px-6 py-12 text-center text-gray-400">Không có tập tin nào</td></tr>
+                                ) : (
+                                    allFiles.map(file => (
+                                        <tr key={file.id} className="hover:bg-gray-50 dark:hover:bg-slate-800 transition">
+                                            <td className="px-6 py-4">
+                                                <div className="flex items-center gap-3">
+                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${file.type === 'Image' ? 'bg-orange-100 text-orange-600' : file.type === 'Audio' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                                                        {file.type === 'Image' ? <ImageIcon size={16}/> : file.type === 'Audio' ? <Music size={16}/> : <LinkIcon size={16}/>}
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <div className="font-medium text-gray-800 dark:text-white truncate max-w-xs" title={file.name}>{file.name}</div>
+                                                        {file.type === 'Image' && <div className="w-12 h-12 mt-1 rounded border border-gray-200 dark:border-slate-700 bg-gray-100 dark:bg-slate-800 overflow-hidden"><img src={file.src} className="w-full h-full object-cover"/></div>}
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4 text-sm text-gray-500 dark:text-slate-400">{file.type}</td>
+                                            <td className="px-6 py-4 text-sm text-gray-500 dark:text-slate-400">
+                                                <span className="block truncate max-w-xs font-medium text-gray-700 dark:text-slate-300">{file.parentName}</span>
+                                                <span className="text-xs">{file.parentType === 'note' ? 'Trong Ghi chú' : 'Trong Tài liệu'}</span>
+                                            </td>
+                                            <td className="px-6 py-4 font-mono text-sm text-gray-600 dark:text-slate-400">{formatSize(file.size)}</td>
+                                            <td className="px-6 py-4 text-right">
+                                                <button onClick={() => handleDeleteFile(file)} className="p-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-400 hover:text-red-500 hover:border-red-200 rounded-lg transition shadow-sm">
+                                                    <Trash2 size={16}/>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
                     </div>
                 )}
 
@@ -713,12 +904,14 @@ const App: React.FC = () => {
   useEffect(() => { if (isDataLoaded) dbSet('smartstudy_sidebar_collapsed', isSidebarCollapsed); }, [isSidebarCollapsed, isDataLoaded]);
 
   useEffect(() => {
-      const updateEstimate = async () => {
-          const est = await getUsageEstimate();
-          setStorageDisplay((est.usage / 1024 / 1024).toFixed(2));
-      };
-      if (isDataLoaded) updateEstimate();
-  }, [subjects, tasks, notes, resources, trash, isDataLoaded]);
+    // Calculate total usage from state
+    const totalSize = calculateObjectSize(subjects) + 
+                      calculateObjectSize(tasks) + 
+                      calculateObjectSize(notes) + 
+                      calculateObjectSize(resources) + 
+                      calculateObjectSize(trash);
+    setStorageDisplay((totalSize / 1024 / 1024).toFixed(2));
+  }, [subjects, tasks, notes, resources, trash]);
 
 
   useEffect(() => {
@@ -838,6 +1031,36 @@ const App: React.FC = () => {
       if(res) {
           addToTrash('resource', res, res.title);
           setResources(prev => prev.filter(r => r.id !== resId));
+      }
+  };
+
+  const handleDeleteEmbeddedFile = (noteId: string, srcToMatch: string, type: 'Image' | 'Audio') => {
+      const note = notes.find(n => n.id === noteId);
+      if (note) {
+          let newContent = note.content;
+          if (type === 'Image') {
+             // Remove image tag containing the src
+             newContent = newContent.replace(new RegExp(`<img[^>]+src="${srcToMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>`, 'g'), '');
+          } else if (type === 'Audio') {
+             // Remove the div containing audio data
+             // We need to match the specific div content.
+             // Since srcToMatch is the innerText (Base64), we find the div that contains it.
+             const parser = new DOMParser();
+             const doc = parser.parseFromString(newContent, 'text/html');
+             const audioDivs = doc.querySelectorAll('.smartstudy-audio-data');
+             audioDivs.forEach(div => {
+                 if (div.textContent === srcToMatch || (div as HTMLElement).innerText === srcToMatch) {
+                     div.remove();
+                 }
+             });
+             newContent = doc.body.innerHTML;
+          }
+          
+          handleUpdateNote({
+              ...note,
+              content: newContent,
+              lastModified: new Date().toISOString()
+          });
       }
   };
 
@@ -1134,7 +1357,7 @@ const App: React.FC = () => {
         ) : currentView === 'search' ? (
            <SearchManager tasks={tasks} notes={notes} subjects={subjects} onSelectSubject={handleViewChange} onSelectNote={handleDirectOpenNote}/>
         ) : currentView === 'storage' ? (
-            <StorageView subjects={subjects} tasks={tasks} notes={notes} resources={resources} trash={trash} onDeleteSubject={handleDeleteSubject} onDeleteTask={handleDeleteTask} onDeleteNote={handleDeleteNote} onDeleteResource={handleDeleteResource} onRestore={handleRestoreFromTrash} onPermanentDelete={handlePermanentDelete} onResetData={handleResetData} onOpenExport={() => { setTransferMode('export'); setShowDataTransfer(true); }} onOpenImport={() => { setTransferMode('import'); setShowDataTransfer(true); }} onEmptyTrash={handleEmptyTrash}/>
+            <StorageView subjects={subjects} tasks={tasks} notes={notes} resources={resources} trash={trash} onDeleteSubject={handleDeleteSubject} onDeleteTask={handleDeleteTask} onDeleteNote={handleDeleteNote} onDeleteResource={handleDeleteResource} onDeleteEmbeddedFile={handleDeleteEmbeddedFile} onRestore={handleRestoreFromTrash} onPermanentDelete={handlePermanentDelete} onResetData={handleResetData} onOpenExport={() => { setTransferMode('export'); setShowDataTransfer(true); }} onOpenImport={() => { setTransferMode('import'); setShowDataTransfer(true); }} onEmptyTrash={handleEmptyTrash}/>
         ) : activeSubject ? (
           <SubjectDetail subject={activeSubject} tasks={tasks.filter(t => t.subjectId === activeSubject.id)} notes={notes.filter(n => n.subjectId === activeSubject.id)} resources={resources.filter(r => r.subjectId === activeSubject.id)} onAddTask={handleAddTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onAddNote={handleAddNote} onUpdateNote={handleUpdateNote} onDeleteNote={handleDeleteNote} onAddResource={handleAddResource} onDeleteResource={handleDeleteResource} onBack={() => handleViewChange('dashboard')} onEditSubject={() => openEditModal(activeSubject)} onArchiveSubject={() => handleArchiveSubject(activeSubject.id)} lang={lang} initialOpenNoteId={openedNoteId} isCreatingNote={isCreatingNote} onMinimize={handleMinimizeNote} onNoteActive={(noteId) => setActiveNoteId(noteId)} />
         ) : (
