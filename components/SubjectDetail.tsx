@@ -8,10 +8,11 @@ import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import * as pdfjsLib from "https://esm.sh/pdfjs-dist@3.11.174";
 
-// Configure PDF.js worker
+// Configure PDF.js worker using a stable CDN
 const pdfjs = (pdfjsLib as any).default || pdfjsLib;
 if (pdfjs.GlobalWorkerOptions) {
-    pdfjs.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+    // Using cdnjs for the worker ensures better stability and CORS handling than esm.sh for workers
+    pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
 
 interface SubjectDetailProps {
@@ -147,6 +148,7 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
   const [scale, setScale] = useState(1.0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const renderTaskRef = useRef<any>(null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   // Task Form State
   const [taskMode, setTaskMode] = useState<'single' | 'bulk'>('single');
@@ -240,6 +242,7 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
           setNumPages(0);
           setScale(1.0);
           setPdfDoc(null);
+          setPdfError(null);
 
           const loadPdf = async () => {
               try {
@@ -249,6 +252,7 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                   setNumPages(pdf.numPages);
               } catch (error) {
                   console.error('Error loading PDF:', error);
+                  setPdfError("Không thể tải file PDF. Vui lòng thử tải xuống.");
               }
           };
           loadPdf();
@@ -274,6 +278,9 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
 
               canvas.height = viewport.height;
               canvas.width = viewport.width;
+              
+              // Clear canvas before render
+              context.clearRect(0, 0, canvas.width, canvas.height);
 
               const renderContext = {
                   canvasContext: context,
@@ -984,7 +991,11 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
   }
   
   const handleResourceFileSelect = (file: File) => {
-      setResTitle(file.name);
+      // Auto-populate name if empty (limit 8 words)
+      const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
+      const limitedName = fileNameWithoutExt.split(/\s+/).slice(0, 8).join(" ");
+      setResTitle(limitedName);
+      
       setResType('File');
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -1452,7 +1463,7 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                               <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => e.target.files?.[0] && handleResourceFileSelect(e.target.files[0])}/>
                               <UploadCloud size={40} className="text-emerald-500 mb-2"/>
                               <p className="font-medium text-gray-700 dark:text-gray-300">Chọn file từ máy tính</p>
-                              {resUrl && <p className="mt-4 text-emerald-600 font-bold text-sm bg-emerald-50 px-3 py-1 rounded-full">Đã chọn: {resTitle}</p>}
+                              {resUrl && <p className="mt-4 text-emerald-600 font-bold text-sm bg-emerald-50 px-3 py-1 rounded-full truncate max-w-[200px]">Đã chọn: {resTitle}</p>}
                           </div>
                       ) : (
                           <div>
@@ -1941,8 +1952,16 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                                             </div>
                                         </div>
                                         {/* Canvas Container */}
-                                        <div className="flex-1 overflow-auto flex justify-center p-8 bg-gray-500/10">
-                                            <canvas ref={canvasRef} className="shadow-xl" />
+                                        <div className="flex-1 overflow-auto flex justify-center p-8 bg-gray-500/10 relative">
+                                            {pdfError ? (
+                                                <div className="text-center p-4 bg-red-50 text-red-600 rounded-lg">
+                                                    <p className="font-bold">Lỗi:</p>
+                                                    <p>{pdfError}</p>
+                                                    <a href={previewResource.url} download target="_blank" className="underline mt-2 inline-block">Tải xuống để xem</a>
+                                                </div>
+                                            ) : (
+                                                <canvas ref={canvasRef} className="shadow-xl" />
+                                            )}
                                         </div>
                                     </div>
                                 ) : (

@@ -6,9 +6,9 @@ import * as pdfjsLib from "https://esm.sh/pdfjs-dist@3.11.174";
 // Handle inconsistent ESM export structure for pdfjs-dist
 const pdfjs = (pdfjsLib as any).default || pdfjsLib;
 
-// Worker config for PDF.js
+// Worker config for PDF.js using stable CDN
 if (pdfjs.GlobalWorkerOptions) {
-    pdfjs.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+    pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
 
 export interface RichTextEditorRef {
@@ -570,7 +570,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
 
                 {/* AI Summary Box - Enhanced Collapsible Card Style */}
                 {summary ? (
-                    <div className="m-5 rounded-2xl border border-emerald-100 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-900/10 overflow-hidden shadow-sm transition-all duration-300 select-none">
+                    <div className="mx-5 mt-5 mb-1 rounded-2xl border border-emerald-100 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-900/10 overflow-hidden shadow-sm transition-all duration-300 select-none">
                         <div 
                             className="p-3 flex items-center justify-between cursor-pointer hover:bg-emerald-100/50 dark:hover:bg-emerald-900/20 transition"
                             onClick={() => setIsSummaryExpanded(!isSummaryExpanded)}
@@ -598,7 +598,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                 ) : (
                     <div 
                         onClick={onOpenAISidebar}
-                        className="m-5 rounded-2xl border border-dashed border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-900/50 p-4 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-800 transition group select-none"
+                        className="mx-5 mt-5 mb-1 rounded-2xl border border-dashed border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-900/50 p-4 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-800 transition group select-none"
                     >
                         <div className="flex items-start gap-3">
                             <Sparkles size={18} className="text-gray-400 group-hover:text-emerald-500 transition-colors mt-0.5" />
@@ -697,8 +697,9 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                     background-size: 100% ${PAGE_HEIGHT_PX}px;
                     background-repeat: repeat-y;
                     /* Padding Top/Bottom: 40px for page break visualization */
+                    /* Reduced top padding to decrease gap with summary */
                     /* Padding Left/Right: 20px to match Summary Box p-5 (20px) since container padding is removed */
-                    padding: 40px 20px; 
+                    padding: 20px 20px 40px 20px; 
                 }
                 .dark .page-view-editor {
                     background-image: url('${svgDarkUrl}');
