@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
-import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight, RotateCcw, RotateCw, Type, Palette, ChevronDown, Sparkles, Image as ImageIcon, FileUp, MoreHorizontal, Trash, Maximize2, Minimize2, Settings, HelpCircle, Keyboard, X, Link as LinkIcon } from 'lucide-react';
+import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight, RotateCcw, RotateCw, Type, Palette, ChevronDown, Sparkles, Image as ImageIcon, FileUp, MoreHorizontal, Trash, Maximize2, Minimize2, Settings, HelpCircle, Keyboard, X, Link as LinkIcon, Download } from 'lucide-react';
 import * as mammoth from "https://esm.sh/mammoth@1.6.0";
 import * as pdfjsLib from "https://esm.sh/pdfjs-dist@3.11.174";
 
@@ -25,6 +25,9 @@ interface RichTextEditorProps {
     onSave?: () => void;
 }
 
+// A4 Height approx 1123px at 96DPI. We use a pattern height slightly smaller for screen viewing comfort.
+const PAGE_HEIGHT_PX = 1123; 
+
 const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ initialContent, onChange, placeholder, onSave }, ref) => {
     const editorRef = useRef<HTMLDivElement>(null);
     const [fontName, setFontName] = useState('Inter');
@@ -32,6 +35,9 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
     const fileInputRef = useRef<HTMLInputElement>(null);
     const docInputRef = useRef<HTMLInputElement>(null);
     const [showShortcuts, setShowShortcuts] = useState(false);
+    
+    // Stats
+    const [stats, setStats] = useState({ words: 0, currentPage: 1, totalPages: 1 });
 
     // Image Editing State
     const [selectedImage, setSelectedImage] = useState<HTMLImageElement | null>(null);
@@ -80,11 +86,14 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
             setSummary('');
             if(editorRef.current) editorRef.current.innerHTML = '';
         }
+        updateStats();
     }, []); 
 
-    // Handle clicks inside editor to detect image selection
+    // Handle clicks inside editor to detect image selection and update stats
     useEffect(() => {
         const handleClick = (e: MouseEvent) => {
+            updateStats(); // Update stats on click
+
             const target = e.target as HTMLElement;
             if (target.tagName === 'IMG' && editorRef.current?.contains(target)) {
                 const img = target as HTMLImageElement;
@@ -107,18 +116,55 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
         const currentEditor = editorRef.current;
         if (currentEditor) {
             currentEditor.addEventListener('click', handleClick);
+            currentEditor.addEventListener('keyup', updateStats); // Update stats on keyup
         }
 
         return () => {
             if (currentEditor) {
                 currentEditor.removeEventListener('click', handleClick);
+                currentEditor.removeEventListener('keyup', updateStats);
             }
         }
     }, []);
 
+    const updateStats = () => {
+        if (!editorRef.current) return;
+
+        // Word Count
+        const text = editorRef.current.innerText || '';
+        const wordCount = text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
+
+        // Page Calculation
+        // 1. Calculate Total Pages based on height
+        const scrollHeight = editorRef.current.scrollHeight;
+        const totalPages = Math.max(1, Math.ceil(scrollHeight / PAGE_HEIGHT_PX));
+
+        // 2. Calculate Current Page based on cursor position
+        let currentPage = 1;
+        const selection = window.getSelection();
+        if (selection && selection.rangeCount > 0 && editorRef.current.contains(selection.anchorNode)) {
+            try {
+                const range = selection.getRangeAt(0);
+                const rect = range.getBoundingClientRect();
+                const editorRect = editorRef.current.getBoundingClientRect();
+                
+                // Calculate relative Y position of the cursor inside the editor content
+                // We add scrollTop because getBoundingClientRect is relative to viewport
+                const relativeY = rect.top - editorRect.top + editorRef.current.scrollTop;
+                
+                currentPage = Math.max(1, Math.ceil(relativeY / PAGE_HEIGHT_PX));
+            } catch (e) {
+                // Fallback if range calculation fails
+            }
+        }
+
+        setStats({ words: wordCount, currentPage, totalPages });
+    };
+
     const handleChange = () => {
         if (editorRef.current) {
             onChange(editorRef.current.innerHTML);
+            updateStats();
         }
     };
 
@@ -202,6 +248,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                 }
             }
         }
+        updateStats();
     };
 
     // --- Image Compression & Insertion ---
@@ -280,6 +327,17 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
         }
     };
 
+    const downloadImage = () => {
+        if(selectedImage) {
+            const a = document.createElement('a');
+            a.href = selectedImage.src;
+            a.download = `image-${Date.now()}.png`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+    };
+
     // --- Doc Import (PDF/Word) ---
     const handleDocImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -344,6 +402,42 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
         { key: 'Ctrl + B/I/U', desc: 'Đậm/Nghiêng/Gạch' },
         { key: 'Tab', desc: 'Thụt đầu dòng' },
     ];
+
+    // SVG for Light Mode Page Break - Using encodeURIComponent and percentage coordinates for robustness
+    const svgLight = `
+<svg width='100%' height='${PAGE_HEIGHT_PX}' xmlns='http://www.w3.org/2000/svg'>
+  <defs>
+    <pattern id='p-light' x='0' y='0' width='100%' height='${PAGE_HEIGHT_PX}' patternUnits='userSpaceOnUse'>
+      <rect x='0' y='0' width='100%' height='${PAGE_HEIGHT_PX - 40}' fill='white' />
+      <rect x='0' y='${PAGE_HEIGHT_PX - 40}' width='100%' height='40' fill='%23f1f5f9' />
+      <line x1='2%' y1='${PAGE_HEIGHT_PX - 20}' x2='40%' y2='${PAGE_HEIGHT_PX - 20}' stroke='%23cbd5e1' stroke-width='2' stroke-dasharray='6 4' />
+      <text x='50%' y='${PAGE_HEIGHT_PX - 15}' font-family='sans-serif' font-size='12' font-weight='bold' fill='%2394a3b8' text-anchor='middle'>Page break</text>
+      <line x1='60%' y1='${PAGE_HEIGHT_PX - 20}' x2='98%' y2='${PAGE_HEIGHT_PX - 20}' stroke='%23cbd5e1' stroke-width='2' stroke-dasharray='6 4' />
+    </pattern>
+  </defs>
+  <rect x='0' y='0' width='100%' height='100%' fill='url(%23p-light)' />
+</svg>
+`.trim().replace(/\n/g, '');
+
+    // SVG for Dark Mode Page Break
+    const svgDark = `
+<svg width='100%' height='${PAGE_HEIGHT_PX}' xmlns='http://www.w3.org/2000/svg'>
+  <defs>
+    <pattern id='p-dark' x='0' y='0' width='100%' height='${PAGE_HEIGHT_PX}' patternUnits='userSpaceOnUse'>
+      <rect x='0' y='0' width='100%' height='${PAGE_HEIGHT_PX - 40}' fill='%231e293b' />
+      <rect x='0' y='${PAGE_HEIGHT_PX - 40}' width='100%' height='40' fill='%230f172a' />
+      <line x1='2%' y1='${PAGE_HEIGHT_PX - 20}' x2='40%' y2='${PAGE_HEIGHT_PX - 20}' stroke='%23334155' stroke-width='2' stroke-dasharray='6 4' />
+      <text x='50%' y='${PAGE_HEIGHT_PX - 15}' font-family='sans-serif' font-size='12' font-weight='bold' fill='%23475569' text-anchor='middle'>Page break</text>
+      <line x1='60%' y1='${PAGE_HEIGHT_PX - 20}' x2='98%' y2='${PAGE_HEIGHT_PX - 20}' stroke='%23334155' stroke-width='2' stroke-dasharray='6 4' />
+    </pattern>
+  </defs>
+  <rect x='0' y='0' width='100%' height='100%' fill='url(%23p-dark)' />
+</svg>
+`.trim().replace(/\n/g, '');
+
+    // Safely encode SVG for data URI
+    const svgLightUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svgLight)}`;
+    const svgDarkUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svgDark)}`;
 
     return (
         <div className="flex flex-col h-full border border-gray-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-sm transition-colors relative group w-full">
@@ -451,8 +545,8 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                 </div>
             </div>
             
-            {/* Editor Container */}
-            <div className="flex-1 overflow-y-auto relative flex flex-col p-6 cursor-text relative" onClick={() => editorRef.current?.focus()}>
+            {/* Editor Container - Removed p-6 for full width */}
+            <div className="flex-1 overflow-y-auto relative flex flex-col cursor-text relative editor-scroll-container" onClick={() => editorRef.current?.focus()}>
                 
                 {/* Floating Image Toolbar */}
                 {selectedImage && (
@@ -466,12 +560,13 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                         <button onClick={() => resizeImage('large')} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700 rounded text-xs font-bold text-gray-600 dark:text-gray-300">75%</button>
                         <button onClick={() => resizeImage('auto')} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700 rounded text-xs font-bold text-gray-600 dark:text-gray-300">Auto</button>
                         <div className="w-px h-4 bg-gray-300 dark:bg-slate-600 mx-1"></div>
-                        <button onClick={removeImage} className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/30 rounded text-red-500"><Trash size={14}/></button>
+                        <button onClick={downloadImage} className="p-1.5 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded text-blue-500" title="Tải xuống"><Download size={14}/></button>
+                        <button onClick={removeImage} className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/30 rounded text-red-500" title="Xóa ảnh"><Trash size={14}/></button>
                     </div>
                 )}
 
-                {/* AI Summary Box */}
-                <div className={`mb-6 p-5 rounded-2xl transition-all duration-300 select-none ${summary ? 'bg-emerald-50 dark:bg-emerald-900/10 opacity-100' : 'bg-slate-50 dark:bg-slate-800/30 opacity-40 hover:opacity-100'}`}>
+                {/* AI Summary Box - Full width styling to align with content padding */}
+                <div className={`p-5 border-b border-gray-100 dark:border-slate-800 transition-all duration-300 select-none ${summary ? 'bg-emerald-50 dark:bg-emerald-900/10 opacity-100' : 'bg-slate-50 dark:bg-slate-800/30 opacity-40 hover:opacity-100'}`}>
                     <div className="flex items-center gap-2 mb-2">
                         <Sparkles size={16} className={summary ? "text-emerald-500" : "text-gray-400"} />
                         <span className={`text-sm font-bold ${summary ? "text-emerald-700 dark:text-emerald-400" : "text-gray-500"}`}>
@@ -490,7 +585,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                 {/* Content Editable */}
                 <div 
                     ref={editorRef}
-                    className="flex-1 outline-none prose prose-slate max-w-none dark:prose-invert prose-p:my-2 prose-headings:mb-3 prose-headings:mt-4 prose-img:rounded-xl prose-img:shadow-sm"
+                    className="flex-1 outline-none prose prose-slate max-w-none dark:prose-invert prose-p:my-2 prose-headings:mb-3 prose-headings:mt-4 prose-img:rounded-xl prose-img:shadow-sm page-view-editor"
                     contentEditable
                     onInput={handleChange}
                     onKeyUp={handleKeyUp}
@@ -498,35 +593,44 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                     data-placeholder={placeholder}
                     style={{ fontSize: '15px', lineHeight: '1.7', minHeight: '100px' }}
                 />
+            </div>
 
-                {/* Floating Shortcut Help Button */}
-                <div className="absolute bottom-4 right-4 z-20 print:hidden">
-                    <button 
-                        onClick={() => setShowShortcuts(!showShortcuts)}
-                        className={`p-2.5 rounded-full shadow-lg transition-all ${showShortcuts ? 'bg-emerald-600 text-white' : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:text-emerald-600 border border-gray-100 dark:border-slate-700'}`}
-                        title="Phím tắt gõ nhanh"
-                    >
-                        {showShortcuts ? <X size={20}/> : <Keyboard size={20}/>}
-                    </button>
+            {/* Footer Stats Bar */}
+            <div className="absolute bottom-2 right-4 z-20 pointer-events-none print:hidden flex gap-2">
+                 <div className="bg-white/80 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 backdrop-blur-sm px-3 py-1.5 rounded-full shadow-sm text-xs font-medium text-gray-500 dark:text-slate-400 flex items-center gap-2">
+                     <span>Trang {stats.currentPage}</span>
+                     <span className="w-1 h-1 rounded-full bg-gray-300 dark:bg-slate-600"></span>
+                     <span>{stats.words} từ</span>
+                 </div>
+            </div>
 
-                    {/* Shortcuts Popover */}
-                    {showShortcuts && (
-                        <div className="absolute bottom-14 right-0 w-72 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-700 p-4 animate-in slide-in-from-bottom-2 fade-in duration-200 z-50">
-                            <h4 className="text-sm font-bold text-gray-800 dark:text-white mb-3 flex items-center gap-2">
-                                <HelpCircle size={16} className="text-emerald-500"/>
-                                Phím tắt (Markdown)
-                            </h4>
-                            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                                {shortcuts.map((s, i) => (
-                                    <div key={i} className="flex justify-between items-center text-xs group hover:bg-gray-50 dark:hover:bg-slate-700/50 p-1 rounded">
-                                        <code className="bg-gray-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-emerald-600 dark:text-emerald-400 font-mono font-bold border border-gray-200 dark:border-slate-600">{s.key}</code>
-                                        <span className="text-gray-500 dark:text-slate-400">{s.desc}</span>
-                                    </div>
-                                ))}
-                            </div>
+            {/* Floating Shortcut Help Button */}
+            <div className="absolute bottom-12 right-4 z-20 print:hidden">
+                <button 
+                    onClick={() => setShowShortcuts(!showShortcuts)}
+                    className={`p-2.5 rounded-full shadow-lg transition-all ${showShortcuts ? 'bg-emerald-600 text-white' : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:text-emerald-600 border border-gray-100 dark:border-slate-700'}`}
+                    title="Phím tắt gõ nhanh"
+                >
+                    {showShortcuts ? <X size={20}/> : <Keyboard size={20}/>}
+                </button>
+
+                {/* Shortcuts Popover */}
+                {showShortcuts && (
+                    <div className="absolute bottom-14 right-0 w-72 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-700 p-4 animate-in slide-in-from-bottom-2 fade-in duration-200 z-50">
+                        <h4 className="text-sm font-bold text-gray-800 dark:text-white mb-3 flex items-center gap-2">
+                            <HelpCircle size={16} className="text-emerald-500"/>
+                            Phím tắt (Markdown)
+                        </h4>
+                        <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                            {shortcuts.map((s, i) => (
+                                <div key={i} className="flex justify-between items-center text-xs group hover:bg-gray-50 dark:hover:bg-slate-700/50 p-1 rounded">
+                                    <code className="bg-gray-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-emerald-600 dark:text-emerald-400 font-mono font-bold border border-gray-200 dark:border-slate-600">{s.key}</code>
+                                    <span className="text-gray-500 dark:text-slate-400">{s.desc}</span>
+                                </div>
+                            ))}
                         </div>
-                    )}
-                </div>
+                    </div>
+                )}
             </div>
 
             <style>{`
@@ -553,6 +657,19 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                 img:hover {
                     box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.4);
                     cursor: pointer;
+                }
+
+                /* Page View Style */
+                .page-view-editor {
+                    background-image: url('${svgLightUrl}');
+                    background-size: 100% ${PAGE_HEIGHT_PX}px;
+                    background-repeat: repeat-y;
+                    /* Padding Top/Bottom: 40px for page break visualization */
+                    /* Padding Left/Right: 20px to match Summary Box p-5 (20px) since container padding is removed */
+                    padding: 40px 20px; 
+                }
+                .dark .page-view-editor {
+                    background-image: url('${svgDarkUrl}');
                 }
             `}</style>
         </div>

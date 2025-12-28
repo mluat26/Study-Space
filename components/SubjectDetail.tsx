@@ -1,11 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Subject, Task, Note, Resource, Language } from '../types';
-import { Plus, CheckCircle, Circle, FileText, Link as LinkIcon, Trash2, ArrowLeft, X, Printer, Calendar, ArrowRight, GripVertical, AlertCircle, PlayCircle, FolderOpen, Video, Copy, Wand2, PenTool, Download, CheckSquare, Square, File, UploadCloud, Clock, Save, FilePlus, Sparkles, Archive, Search, ExternalLink, Mic, StopCircle, FileAudio, AlignLeft, Eye, EyeOff, MessageSquare, Headphones, ChevronRight, Play, Pause, Music, Loader2, LayoutGrid, List, Minus, Image as ImageIcon, Paperclip, Globe, MoreVertical, Layers, ChevronLeft } from 'lucide-react';
+import { Plus, CheckCircle, Circle, FileText, Link as LinkIcon, Trash2, ArrowLeft, X, Printer, Calendar, ArrowRight, GripVertical, AlertCircle, PlayCircle, FolderOpen, Video, Copy, Wand2, PenTool, Download, CheckSquare, Square, File, UploadCloud, Clock, Save, FilePlus, Sparkles, Archive, Search, ExternalLink, Mic, StopCircle, FileAudio, AlignLeft, Eye, EyeOff, MessageSquare, Headphones, ChevronRight, Play, Pause, Music, Loader2, LayoutGrid, List, Minus, Image as ImageIcon, Paperclip, Globe, MoreVertical, Layers, ChevronLeft, Settings, ZoomIn, ZoomOut, Youtube } from 'lucide-react';
 import { ICONS, TRANSLATIONS } from '../constants';
 import RichTextEditor, { RichTextEditorRef } from './RichTextEditor';
 import AudioVisualizer from './AudioVisualizer';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import * as pdfjsLib from "https://esm.sh/pdfjs-dist@3.11.174";
+
+// Configure PDF.js worker
+const pdfjs = (pdfjsLib as any).default || pdfjsLib;
+if (pdfjs.GlobalWorkerOptions) {
+    pdfjs.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+}
 
 interface SubjectDetailProps {
   subject: Subject;
@@ -46,18 +53,58 @@ const processContentForPrint = (htmlContent: string) => {
     try {
         const parser = new DOMParser();
         const doc = parser.parseFromString(htmlContent, 'text/html');
+        // Hide audio placeholders in the main text as they will be listed at the bottom
         const audioDivs = doc.querySelectorAll('.smartstudy-audio-data');
-        audioDivs.forEach(div => div.remove());
+        audioDivs.forEach(div => (div as HTMLElement).style.display = 'none');
+        
+        // Ensure images are styled for print (inline but constrained)
         const images = doc.querySelectorAll('img');
         images.forEach(img => {
             img.style.maxWidth = '100%';
             img.style.height = 'auto';
+            img.style.display = 'block';
+            img.style.margin = '10px 0';
         });
         return doc.body.innerHTML;
     } catch (e) {
         return htmlContent;
     }
 };
+
+const extractMetadataFromContent = (htmlContent: string) => {
+    try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(htmlContent, 'text/html');
+        
+        const audios: {name: string, date: string}[] = [];
+        doc.querySelectorAll('.smartstudy-audio-data').forEach(div => {
+            const name = div.getAttribute('data-name') || 'Audio File';
+            const date = div.getAttribute('data-created') || '';
+            audios.push({ name, date });
+        });
+
+        const links: {text: string, href: string}[] = [];
+        doc.querySelectorAll('a').forEach(a => {
+            if(a.href) links.push({ text: a.innerText || a.href, href: a.href });
+        });
+
+        return { audios, links };
+    } catch (e) {
+        return { audios: [], links: [] };
+    }
+}
+
+const getYoutubeEmbedUrl = (url: string) => {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11)
+      ? `https://www.youtube.com/embed/${match[2]}`
+      : null;
+};
+
+const isYoutubeUrl = (url: string) => {
+    return url.includes('youtube.com') || url.includes('youtu.be');
+}
 
 const SubjectDetail: React.FC<SubjectDetailProps> = ({
   subject, tasks, notes, resources,
@@ -79,7 +126,7 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Exclusive Sidebar State
-  const [activeSidebar, setActiveSidebar] = useState<'none' | 'attachment' | 'audio' | 'ai'>('none');
+  const [activeSidebar, setActiveSidebar] = useState<'none' | 'attachment' | 'audio' | 'ai' | 'pdf_export'>('none');
 
   // Attachment Sidebar specific
   const [extractedImages, setExtractedImages] = useState<string[]>([]);
@@ -92,6 +139,14 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
   // Resource Preview
   const [previewResource, setPreviewResource] = useState<Resource | null>(null);
   const [drawerSearchTerm, setDrawerSearchTerm] = useState('');
+
+  // PDF Viewer State
+  const [pdfDoc, setPdfDoc] = useState<any>(null);
+  const [pageNum, setPageNum] = useState(1);
+  const [numPages, setNumPages] = useState(0);
+  const [scale, setScale] = useState(1.0);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const renderTaskRef = useRef<any>(null);
 
   // Task Form State
   const [taskMode, setTaskMode] = useState<'single' | 'bulk'>('single');
@@ -110,6 +165,13 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
   const [audioAttachments, setAudioAttachments] = useState<AudioAttachment[]>([]);
   const [isNoteDirty, setIsNoteDirty] = useState(false); 
   const [activeAudioId, setActiveAudioId] = useState<string | null>(null);
+
+  // Single Note PDF Options
+  const [singlePdfOpts, setSinglePdfOpts] = useState({
+      header: true,
+      audio: true,
+      sources: true
+  });
 
   // AI State
   const [aiSummaryResult, setAiSummaryResult] = useState('');
@@ -164,6 +226,68 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       };
   }, []);
 
+  // PDF Loading Effect
+  useEffect(() => {
+      if (previewResource && (previewResource.type === 'File' || (previewResource.type === 'Link' && previewResource.url.endsWith('.pdf')))) {
+          // Reset state
+          setPageNum(1);
+          setNumPages(0);
+          setScale(1.0);
+          setPdfDoc(null);
+
+          const loadPdf = async () => {
+              try {
+                  const loadingTask = pdfjs.getDocument(previewResource.url);
+                  const pdf = await loadingTask.promise;
+                  setPdfDoc(pdf);
+                  setNumPages(pdf.numPages);
+              } catch (error) {
+                  console.error('Error loading PDF:', error);
+              }
+          };
+          loadPdf();
+      }
+  }, [previewResource]);
+
+  // PDF Render Page Effect
+  useEffect(() => {
+      const renderPage = async () => {
+          if (!pdfDoc || !canvasRef.current) return;
+
+          try {
+              if (renderTaskRef.current) {
+                  await renderTaskRef.current.cancel();
+              }
+
+              const page = await pdfDoc.getPage(pageNum);
+              const viewport = page.getViewport({ scale });
+              const canvas = canvasRef.current;
+              const context = canvas.getContext('2d');
+
+              if (!context) return;
+
+              canvas.height = viewport.height;
+              canvas.width = viewport.width;
+
+              const renderContext = {
+                  canvasContext: context,
+                  viewport: viewport,
+              };
+
+              const renderTask = page.render(renderContext);
+              renderTaskRef.current = renderTask;
+              await renderTask.promise;
+          } catch (error: any) {
+              if (error.name !== 'RenderingCancelledException') {
+                  console.error('Render error:', error);
+              }
+          }
+      };
+
+      renderPage();
+  }, [pdfDoc, pageNum, scale]);
+
+
   const stopRecordingInternal = () => {
         if (timerRef.current) clearInterval(timerRef.current);
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
@@ -177,7 +301,7 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
   }
 
   // Toggle Logic for Sidebars
-  const toggleSidebar = (sidebar: 'attachment' | 'audio' | 'ai') => {
+  const toggleSidebar = (sidebar: 'attachment' | 'audio' | 'ai' | 'pdf_export') => {
       if (activeSidebar === sidebar) {
           setActiveSidebar('none');
       } else {
@@ -655,30 +779,52 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       setIsExporting(true);
       setPrintData(notesToPrint);
       
+      // Wait for React to render the hidden print area
       setTimeout(async () => {
-          const element = document.getElementById('print-area');
-          if (element) {
+          // Select all individual note containers
+          const elements = document.querySelectorAll('.printable-note-item');
+          if (elements.length > 0) {
              try {
-                 const canvas = await html2canvas(element, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
-                 const imgData = canvas.toDataURL('image/png');
                  const pdf = new jsPDF('p', 'mm', 'a4');
                  const pdfWidth = pdf.internal.pageSize.getWidth();
                  const pdfHeight = pdf.internal.pageSize.getHeight();
-                 const imgProps = pdf.getImageProperties(imgData);
-                 const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
-                 
-                 let heightLeft = imgHeight;
-                 let position = 0;
-                 
-                 pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
-                 heightLeft -= pdfHeight;
-                 
-                 while (heightLeft > 0) {
-                     position -= pdfHeight; 
-                     pdf.addPage();
-                     pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
-                     heightLeft -= pdfHeight;
+                 const margin = 20; // Increased margin
+                 const printWidth = pdfWidth - (margin * 2);
+
+                 for (let i = 0; i < elements.length; i++) {
+                     const el = elements[i] as HTMLElement;
+                     
+                     // Capture each note individually
+                     const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+                     const imgData = canvas.toDataURL('image/png');
+                     
+                     const imgProps = pdf.getImageProperties(imgData);
+                     const imgHeight = (imgProps.height * printWidth) / imgProps.width;
+                     
+                     let heightLeft = imgHeight;
+                     let position = margin; // Start from top margin
+
+                     // Add the first page of the note
+                     // x = margin, y = position, w = printWidth
+                     pdf.addImage(imgData, 'PNG', margin, position, printWidth, imgHeight);
+                     heightLeft -= (pdfHeight - margin); // Account for top margin on first page
+
+                     // If note is longer than one page, add subsequent pages
+                     while (heightLeft > 0) {
+                         position -= pdfHeight; 
+                         pdf.addPage();
+                         // On subsequent pages, we don't strictly enforce top margin for image stitching unless we split the image.
+                         // Standard jsPDF addImage stitching:
+                         pdf.addImage(imgData, 'PNG', margin, position, printWidth, imgHeight);
+                         heightLeft -= pdfHeight;
+                     }
+
+                     // If there are more notes, add a new page for the next note
+                     if (i < elements.length - 1) {
+                         pdf.addPage();
+                     }
                  }
+                 
                  pdf.save(`${subject.name}_Notes.pdf`);
              } catch (e) {
                  console.error(e);
@@ -688,8 +834,53 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                  setPrintData(null);
                  setShowPdfDrawer(false);
              }
+          } else {
+              setIsExporting(false);
+              setPrintData(null);
           }
       }, 1000);
+  }
+
+  const handleExportSingleNotePDF = () => {
+      setIsExporting(true);
+      setTimeout(async () => {
+          const element = document.getElementById('single-note-print-preview');
+          if (element) {
+              try {
+                  const canvas = await html2canvas(element, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+                  const imgData = canvas.toDataURL('image/png');
+                  const pdf = new jsPDF('p', 'mm', 'a4');
+                  const pdfWidth = pdf.internal.pageSize.getWidth();
+                  const pdfHeight = pdf.internal.pageSize.getHeight();
+                  const margin = 20; // Increased margin
+                  const printWidth = pdfWidth - (margin * 2);
+
+                  const imgProps = pdf.getImageProperties(imgData);
+                  const imgHeight = (imgProps.height * printWidth) / imgProps.width;
+                  
+                  let heightLeft = imgHeight;
+                  let position = margin; // Start from top margin
+                  
+                  pdf.addImage(imgData, 'PNG', margin, position, printWidth, imgHeight);
+                  heightLeft -= (pdfHeight - margin);
+                  
+                  while (heightLeft > 0) {
+                      position -= pdfHeight; 
+                      pdf.addPage();
+                      pdf.addImage(imgData, 'PNG', margin, position, printWidth, imgHeight);
+                      heightLeft -= pdfHeight;
+                  }
+                  
+                  pdf.save(`${noteTitle || 'Note'}.pdf`);
+              } catch (e) {
+                  console.error(e);
+                  alert("Lỗi khi xuất PDF");
+              } finally {
+                  setIsExporting(false);
+                  setActiveSidebar('none');
+              }
+          }
+      }, 500);
   }
   
   const renderHeaderIcon = () => {
@@ -747,9 +938,14 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
           try {
               const urlObj = new URL(url);
               let name = urlObj.hostname.replace('www.', '');
-              const pathSegments = urlObj.pathname.split('/').filter(Boolean);
-              if (pathSegments.length > 0) name = pathSegments[pathSegments.length - 1];
-              if (name.length > 12) name = name.substring(0, 12) + '...';
+              // Auto-detect YouTube title logic could be here but usually requires API
+              if (url.includes('youtube') || url.includes('youtu.be')) {
+                  name = 'YouTube Video';
+              } else {
+                  const pathSegments = urlObj.pathname.split('/').filter(Boolean);
+                  if (pathSegments.length > 0) name = pathSegments[pathSegments.length - 1];
+              }
+              if (name.length > 20) name = name.substring(0, 20) + '...';
               setResTitle(name);
           } catch { }
       }
@@ -779,6 +975,9 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
   const headerClass = isCustomColor ? '' : subject.color;
 
   const IconComp = ICONS[subject.icon] || ICONS['Book'];
+  
+  // Render specific content for PDF Preview
+  const isPDF = previewResource && (previewResource.type === 'File' || (previewResource.type === 'Link' && previewResource.url.endsWith('.pdf')));
 
   return (
     <div className="flex-1 flex flex-col h-full bg-gray-50 dark:bg-slate-950 relative transition-colors">
@@ -786,6 +985,29 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
         @media print {
             body > * { display: none !important; }
         }
+        /* Style for visual page break in preview/canvas */
+        .print-page-break {
+            margin: 40px 0;
+            height: 40px;
+            background-color: #f1f5f9;
+            border-top: 2px dashed #cbd5e1;
+            border-bottom: 2px dashed #cbd5e1;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            clear: both;
+            break-after: page;
+        }
+        .print-page-break::before {
+             content: 'PAGE BREAK';
+             font-size: 10px;
+             color: #94a3b8;
+             font-weight: bold;
+             letter-spacing: 2px;
+             text-transform: uppercase;
+        }
+        
       `}</style>
       
       {/* Header */}
@@ -1028,17 +1250,18 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                      let iconColor = 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400';
                      if (res.type === 'File') { ResIcon = FileText; iconColor = 'bg-orange-50 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'; } 
                      else if (res.type === 'Audio') { ResIcon = FileAudio; iconColor = 'bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400'; }
+                     if (isYoutubeUrl(res.url)) { ResIcon = Youtube; iconColor = 'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400'; }
 
                      return (
-                     <div key={res.id} onClick={() => { setPreviewResource(res); setDrawerSearchTerm(''); }} className="p-5 flex items-center justify-between group bg-white dark:bg-slate-900/60 border border-gray-200 dark:border-slate-800 rounded-xl hover:border-emerald-500 dark:hover:border-emerald-500 transition shadow-sm backdrop-blur-sm cursor-pointer">
-                         <div className="flex items-center gap-5 overflow-hidden">
-                             <div className={`${iconColor} p-4 rounded-xl`}><ResIcon size={24} /></div>
-                             <div className="min-w-0">
+                     <div key={res.id} onClick={() => { setPreviewResource(res); setDrawerSearchTerm(''); }} className="p-5 flex items-center justify-between group bg-white dark:bg-slate-900/60 border border-gray-200 dark:border-slate-800 rounded-xl hover:border-emerald-500 dark:hover:border-emerald-500 transition shadow-sm backdrop-blur-sm cursor-pointer gap-4">
+                         <div className="flex items-center gap-5 overflow-hidden flex-1 min-w-0">
+                             <div className={`${iconColor} p-4 rounded-xl flex-shrink-0`}><ResIcon size={24} /></div>
+                             <div className="min-w-0 flex-1">
                                  <div className="font-bold text-lg text-gray-800 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 block truncate transition-colors">{res.title}</div>
                                  <p className="text-sm text-gray-400 mt-1 truncate max-w-xl">{res.type === 'Audio' ? 'Audio Recording' : (res.url.startsWith('data:') ? 'Local File' : res.url)}</p>
                              </div>
                          </div>
-                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
                             {res.type === 'Link' ? (
                                 <button onClick={(e) => { e.stopPropagation(); copyToClipboard(res.url); }} className="p-2 text-gray-400 hover:text-blue-500 transition-colors" title="Copy Link"><Copy size={20}/></button>
                             ) : (
@@ -1227,6 +1450,10 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                            <Sparkles size={20} />
                        </button>
 
+                        <button onClick={() => toggleSidebar('pdf_export')} className={`p-2.5 rounded-xl transition flex items-center gap-2 ${activeSidebar === 'pdf_export' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' : 'bg-gray-200 dark:bg-slate-800 text-gray-600 dark:text-slate-400 hover:bg-gray-300 dark:hover:bg-slate-700'}`} title="Xuất PDF">
+                           <Printer size={20} />
+                       </button>
+
                        <button onClick={handleSaveNote} className="bg-emerald-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-emerald-700 transition flex items-center gap-2 shadow-lg shadow-emerald-200 dark:shadow-none ml-2">
                            <Save size={18}/> {t.save}
                        </button>
@@ -1378,6 +1605,140 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                           </div>
                     </div>
                   )}
+
+                   {/* PDF Export Sidebar */}
+                   {activeSidebar === 'pdf_export' && (
+                    <div className="w-[400px] bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col shadow-xl z-20 animate-in slide-in-from-right duration-300">
+                         <div className="p-4 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-950">
+                              <h3 className="font-bold dark:text-white flex items-center gap-2"><Printer size={18} className="text-orange-500"/> Xuất PDF Ghi chú</h3>
+                              <button onClick={() => setActiveSidebar('none')}><X size={18} className="text-gray-400"/></button>
+                          </div>
+                          <div className="flex-1 p-5 overflow-y-auto flex flex-col">
+                                <div className="mb-6">
+                                    <label className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase mb-3 block flex items-center gap-2"><Settings size={14}/> Tùy chọn</label>
+                                    <div className="space-y-3">
+                                        <div 
+                                            onClick={() => setSinglePdfOpts(p => ({...p, header: !p.header}))}
+                                            className={`p-3 rounded-xl border cursor-pointer flex items-center gap-3 transition ${singlePdfOpts.header ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/10' : 'border-gray-200 dark:border-slate-700'}`}
+                                        >
+                                            <div className={`${singlePdfOpts.header ? 'text-orange-600' : 'text-gray-300'}`}>
+                                                {singlePdfOpts.header ? <CheckSquare size={20}/> : <Square size={20}/>}
+                                            </div>
+                                            <div>
+                                                <p className="font-bold text-sm text-gray-800 dark:text-white">Tiêu đề & Môn học</p>
+                                            </div>
+                                        </div>
+
+                                        <div 
+                                            onClick={() => setSinglePdfOpts(p => ({...p, audio: !p.audio}))}
+                                            className={`p-3 rounded-xl border cursor-pointer flex items-center gap-3 transition ${singlePdfOpts.audio ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/10' : 'border-gray-200 dark:border-slate-700'}`}
+                                        >
+                                            <div className={`${singlePdfOpts.audio ? 'text-orange-600' : 'text-gray-300'}`}>
+                                                {singlePdfOpts.audio ? <CheckSquare size={20}/> : <Square size={20}/>}
+                                            </div>
+                                            <div>
+                                                <p className="font-bold text-sm text-gray-800 dark:text-white">Hiển thị File Ghi âm</p>
+                                                <p className="text-xs text-gray-400">Liệt kê cuối trang</p>
+                                            </div>
+                                        </div>
+
+                                        <div 
+                                            onClick={() => setSinglePdfOpts(p => ({...p, sources: !p.sources}))}
+                                            className={`p-3 rounded-xl border cursor-pointer flex items-center gap-3 transition ${singlePdfOpts.sources ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/10' : 'border-gray-200 dark:border-slate-700'}`}
+                                        >
+                                            <div className={`${singlePdfOpts.sources ? 'text-orange-600' : 'text-gray-300'}`}>
+                                                {singlePdfOpts.sources ? <CheckSquare size={20}/> : <Square size={20}/>}
+                                            </div>
+                                            <div>
+                                                <p className="font-bold text-sm text-gray-800 dark:text-white">Nguồn đính kèm (Link)</p>
+                                                <p className="text-xs text-gray-400">Liệt kê Link cuối trang</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div className="flex-1 flex flex-col min-h-0">
+                                    <div className="flex justify-between items-center mb-2">
+                                         <label className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase flex items-center gap-2"><Eye size={14}/> Xem trước</label>
+                                         <span className="text-[10px] text-gray-400">Bản xem trước A4 (Tỷ lệ 1:1)</span>
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto bg-gray-100 dark:bg-slate-950 rounded-xl p-4 border border-gray-200 dark:border-slate-800">
+                                        <div 
+                                            id="single-note-print-preview"
+                                            className="bg-white text-black p-8 shadow-sm mx-auto origin-top transform scale-75 md:scale-90"
+                                            style={{ minHeight: '297mm', width: '210mm' }} // A4 dimensions
+                                        >
+                                            {singlePdfOpts.header && (
+                                                <div className="border-b-2 border-gray-800 pb-4 mb-6">
+                                                    <h1 className="text-2xl font-bold uppercase tracking-wider mb-1">{subject.name}</h1>
+                                                    <p className="text-gray-500 text-sm">Notes Export • {new Date().toLocaleDateString()}</p>
+                                                </div>
+                                            )}
+                                            
+                                            <h2 className="text-xl font-bold mb-4">{noteTitle || 'Untitled Note'}</h2>
+                                            
+                                            <div 
+                                                className="prose max-w-none text-sm leading-relaxed"
+                                                dangerouslySetInnerHTML={{ 
+                                                    __html: processContentForPrint(noteContent) 
+                                                }}
+                                            />
+                                            
+                                            {/* Footer Section for Single Note Export */}
+                                            {((singlePdfOpts.audio && audioAttachments.length > 0) || (singlePdfOpts.sources && extractedLinks.length > 0)) && (
+                                                <div className="mt-12 pt-4 border-t-2 border-dashed border-gray-300">
+                                                    <h4 className="text-sm font-bold uppercase text-gray-500 mb-3">Tài liệu đính kèm & Liên kết</h4>
+                                                    
+                                                    {singlePdfOpts.audio && audioAttachments.length > 0 && (
+                                                        <div className="mb-4">
+                                                            <h5 className="font-bold text-xs text-gray-700 uppercase mb-1">File ghi âm:</h5>
+                                                            <ul className="list-disc pl-5 text-xs text-gray-600">
+                                                                {audioAttachments.map(a => (
+                                                                    <li key={a.id}>{a.name} (Ngày: {new Date(a.createdAt).toLocaleDateString()})</li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+
+                                                    {singlePdfOpts.sources && extractedLinks.length > 0 && (
+                                                        <div className="mb-4">
+                                                            <h5 className="font-bold text-xs text-gray-700 uppercase mb-1">Liên kết trong bài:</h5>
+                                                            <ul className="list-decimal pl-5 text-xs text-gray-600 break-all">
+                                                                {extractedLinks.map((l, i) => (
+                                                                    <li key={i} className="mb-1">
+                                                                        <span className="font-medium text-black">{l.text}</span>: <span className="text-blue-600 underline">{l.href}</span>
+                                                                    </li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="mt-4 pt-4 border-t border-gray-100 dark:border-slate-800 space-y-2">
+                                    <button 
+                                        onClick={handleExportSingleNotePDF}
+                                        disabled={isExporting}
+                                        className="w-full bg-orange-600 text-white py-3 rounded-xl font-bold hover:bg-orange-700 transition shadow-lg shadow-orange-200 dark:shadow-none flex items-center justify-center gap-2"
+                                    >
+                                        {isExporting ? <Loader2 className="animate-spin"/> : <Download size={20}/>}
+                                        {isExporting ? 'Đang tạo PDF...' : 'Tải xuống PDF'}
+                                    </button>
+                                     <a 
+                                        href="https://www.ilovepdf.com/compress_pdf" 
+                                        target="_blank" 
+                                        rel="noreferrer"
+                                        className="w-full bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-bold hover:bg-gray-200 dark:hover:bg-slate-700 transition flex items-center justify-center gap-2 text-sm"
+                                    >
+                                        <ExternalLink size={16}/> Tải và nén (I Love PDF)
+                                    </a>
+                                </div>
+                          </div>
+                    </div>
+                  )}
               </div>
           </div>
       )}
@@ -1416,11 +1777,19 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                           ))}
                       </div>
                   </div>
-                  <div className="p-6 bg-gray-50 dark:bg-slate-950 border-t border-gray-100 dark:border-slate-800">
+                  <div className="p-6 bg-gray-50 dark:bg-slate-950 border-t border-gray-100 dark:border-slate-800 space-y-3">
                       <button onClick={handleExportPDF} disabled={isExporting || selectedPdfNotes.length === 0} className="w-full bg-emerald-600 text-white py-3.5 rounded-xl font-bold hover:bg-emerald-700 transition shadow-lg shadow-emerald-200 dark:shadow-none disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                           {isExporting ? <Loader2 className="animate-spin"/> : <Download size={20}/>}
                           {isExporting ? 'Đang tạo PDF...' : 'Tải xuống PDF'}
                       </button>
+                      <a 
+                            href="https://www.ilovepdf.com/compress_pdf" 
+                            target="_blank" 
+                            rel="noreferrer"
+                            className="w-full bg-white dark:bg-slate-800 text-gray-600 dark:text-gray-300 py-3.5 rounded-xl font-bold hover:bg-gray-100 dark:hover:bg-slate-700 transition border border-gray-200 dark:border-slate-700 flex items-center justify-center gap-2 text-sm"
+                        >
+                            <ExternalLink size={16}/> Tải và nén (I Love PDF)
+                        </a>
                   </div>
               </div>
           </div>
@@ -1438,9 +1807,13 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                           </div>
                           <div className="flex-1 overflow-y-auto p-2 space-y-1">
                               {resources.filter(r => r.title.toLowerCase().includes(drawerSearchTerm.toLowerCase())).map(r => {
-                                  let Icon = LinkIcon; if(r.type === 'File') Icon = FileText; if(r.type === 'Audio') Icon = Mic;
+                                  let Icon = LinkIcon; 
+                                  if(r.type === 'File') Icon = FileText; 
+                                  if(r.type === 'Audio') Icon = Mic;
+                                  if (isYoutubeUrl(r.url)) Icon = Youtube;
+
                                   return (
-                                      <div key={r.id} className={`w-full text-left p-3 rounded-lg flex items-center justify-between gap-3 transition group cursor-pointer ${previewResource.id === r.id ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800' : 'hover:bg-gray-100 dark:hover:bg-slate-800 border border-transparent'}`} onClick={() => setPreviewResource(r)}>
+                                      <div key={r.id} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition group cursor-pointer ${previewResource.id === r.id ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800' : 'hover:bg-gray-100 dark:hover:bg-slate-800 border border-transparent'}`} onClick={() => setPreviewResource(r)}>
                                           <div className="flex items-center gap-3 min-w-0">
                                               <div className={`flex-shrink-0 p-2 rounded-lg ${previewResource.id === r.id ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900 dark:text-emerald-400' : 'bg-gray-200 text-gray-500 dark:bg-slate-700 dark:text-slate-400'}`}><Icon size={16}/></div>
                                               <span className={`text-sm font-medium truncate ${previewResource.id === r.id ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-700 dark:text-slate-300'}`}>{r.title}</span>
@@ -1461,19 +1834,51 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                           <div className="flex-1 bg-gray-100 dark:bg-slate-950/50 p-6 flex items-center justify-center overflow-hidden relative">
                                {previewResource.type === 'Link' ? (
                                     <div className="w-full h-full relative rounded-2xl border border-gray-200 dark:border-slate-800 bg-white overflow-hidden group">
-                                         <iframe src={previewResource.url} className="w-full h-full" title="Preview" sandbox="allow-same-origin allow-scripts allow-forms"/>
-                                         {/* No Blocking Overlay anymore. Use header button or footer fallback. */}
-                                         <div className="absolute bottom-4 right-4 pointer-events-none">
-                                            <a href={previewResource.url} target="_blank" rel="noreferrer" className="pointer-events-auto bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm px-3 py-1.5 rounded-lg text-xs font-medium text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-700 shadow-sm hover:text-emerald-600 transition">
-                                                Nếu không xem được, bấm để mở tab mới
-                                            </a>
-                                         </div>
+                                         {getYoutubeEmbedUrl(previewResource.url) ? (
+                                             <iframe 
+                                                src={getYoutubeEmbedUrl(previewResource.url)!} 
+                                                className="w-full h-full" 
+                                                title="YouTube Video" 
+                                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                                                allowFullScreen
+                                             />
+                                         ) : (
+                                            <iframe src={previewResource.url} className="w-full h-full" title="Preview" sandbox="allow-same-origin allow-scripts allow-forms"/>
+                                         )}
+                                         
+                                         {/* Enhanced Link Fallback - Small Button */}
+                                         <a href={previewResource.url} target="_blank" rel="noreferrer" 
+                                            className="absolute bottom-4 right-4 z-50 bg-white/90 dark:bg-slate-800/90 border border-gray-200 dark:border-slate-700 shadow-lg px-4 py-2 rounded-full text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-emerald-50 hover:text-emerald-600 transition flex items-center gap-2 backdrop-blur-sm"
+                                         >
+                                            <ExternalLink size={14}/> Mở trang gốc (nếu lỗi)
+                                         </a>
                                     </div>
                                 ) : previewResource.type === 'Audio' ? (
                                     <div className="w-full max-w-md bg-white dark:bg-slate-900 p-8 rounded-2xl shadow-lg border border-gray-100 dark:border-slate-800 text-center">
                                         <div className="w-20 h-20 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center mx-auto mb-6 text-emerald-600 dark:text-emerald-400"><Music size={40} /></div>
                                         <h3 className="text-xl font-bold mb-6 dark:text-white">Phát ghi âm</h3>
                                         <audio controls src={previewResource.url} className="w-full h-12" autoPlay />
+                                    </div>
+                                ) : (previewResource.type === 'File' || previewResource.url.endsWith('.pdf')) ? (
+                                    // PDF Viewer
+                                    <div className="w-full h-full flex flex-col bg-gray-200 dark:bg-slate-900 rounded-xl overflow-hidden shadow-inner relative">
+                                        {/* PDF Toolbar */}
+                                        <div className="h-14 bg-white dark:bg-slate-800 border-b border-gray-300 dark:border-slate-700 flex items-center justify-between px-4 shadow-sm z-10">
+                                            <div className="flex items-center gap-2">
+                                                <button onClick={() => setPageNum(p => Math.max(1, p - 1))} disabled={pageNum <= 1} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-30"><ChevronLeft size={20}/></button>
+                                                <span className="text-sm font-medium dark:text-white">Page {pageNum} / {numPages || '--'}</span>
+                                                <button onClick={() => setPageNum(p => Math.min(numPages, p + 1))} disabled={pageNum >= numPages} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-30"><ChevronRight size={20}/></button>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <button onClick={() => setScale(s => Math.max(0.5, s - 0.2))} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700" title="Zoom Out"><ZoomOut size={18}/></button>
+                                                <span className="text-sm font-mono w-12 text-center dark:text-white">{Math.round(scale * 100)}%</span>
+                                                <button onClick={() => setScale(s => Math.min(3.0, s + 0.2))} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700" title="Zoom In"><ZoomIn size={18}/></button>
+                                            </div>
+                                        </div>
+                                        {/* Canvas Container */}
+                                        <div className="flex-1 overflow-auto flex justify-center p-8 bg-gray-500/10">
+                                            <canvas ref={canvasRef} className="shadow-xl" />
+                                        </div>
                                     </div>
                                 ) : (
                                     <div className="relative w-full h-full flex items-center justify-center">
@@ -1497,16 +1902,70 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
               <div className="flex flex-col gap-8">
                   {printData.map((note, idx) => {
                       const processedContent = processContentForPrint(note.content);
+                      const { audios, links } = extractMetadataFromContent(note.content);
+                      
                       return (
-                      <div key={idx} className="mb-8 break-inside-avoid">
+                      <div key={idx} className="mb-10 break-inside-avoid border-b pb-6 border-slate-100 printable-note-item">
                           <h2 className="text-xl font-bold mb-4 flex items-center gap-2 border-l-4 border-slate-800 pl-3">
                               <span className="text-slate-400">#{idx + 1}</span>
                               {note.title}
                           </h2>
                           <div className="prose max-w-none text-justify leading-relaxed text-sm" dangerouslySetInnerHTML={{ __html: processedContent }}/>
-                          <div className="mt-4 text-xs text-slate-400 border-t pt-2 flex justify-between"><span>Last modified: {new Date(note.lastModified).toLocaleDateString()}</span><span>Page {idx + 1}</span></div>
+                          
+                          {/* Note Footer: Attachments */}
+                          {(audios.length > 0 || links.length > 0) && (
+                              <div className="mt-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
+                                  <h4 className="text-xs font-bold uppercase text-slate-500 mb-2">Tài liệu tham khảo & Đính kèm</h4>
+                                  
+                                  {audios.length > 0 && (
+                                      <div className="mb-3">
+                                          <p className="text-xs font-bold text-slate-700 mb-1">Ghi âm:</p>
+                                          <ul className="list-disc pl-4 text-xs text-slate-600">
+                                              {audios.map((a, i) => (
+                                                  <li key={i}>{a.name} ({new Date(a.date).toLocaleDateString()})</li>
+                                              ))}
+                                          </ul>
+                                      </div>
+                                  )}
+
+                                  {links.length > 0 && (
+                                      <div>
+                                          <p className="text-xs font-bold text-slate-700 mb-1">Liên kết:</p>
+                                          <ul className="list-decimal pl-4 text-xs text-slate-600 break-all">
+                                              {links.map((l, i) => (
+                                                  <li key={i}><span className="font-medium">{l.text}</span>: {l.href}</li>
+                                              ))}
+                                          </ul>
+                                      </div>
+                                  )}
+                              </div>
+                          )}
+                          <div className="mt-4 text-xs text-slate-400 flex justify-between"><span>Last modified: {new Date(note.lastModified).toLocaleDateString()}</span></div>
                       </div>
                   )})}
+
+                  {/* Subject Tasks Section at the END of bulk export */}
+                  {tasks.length > 0 && (
+                      <div className="break-before-page mt-8 printable-note-item">
+                          <h2 className="text-2xl font-bold uppercase tracking-wider mb-6 border-b-2 border-slate-800 pb-2">Danh sách Công việc (Tasks)</h2>
+                          <div className="space-y-2">
+                              {tasks.map((task, idx) => (
+                                  <div key={idx} className="flex items-start gap-3 p-3 border border-slate-200 rounded-lg bg-slate-50">
+                                      <div className={`mt-0.5 w-4 h-4 border-2 rounded flex items-center justify-center ${task.status === 'done' ? 'bg-emerald-600 border-emerald-600' : 'border-slate-400'}`}>
+                                          {task.status === 'done' && <CheckCircle size={10} className="text-white"/>}
+                                      </div>
+                                      <div className="flex-1">
+                                          <p className={`text-sm font-bold ${task.status === 'done' ? 'line-through text-slate-500' : 'text-slate-800'}`}>{task.title}</p>
+                                          <div className="flex gap-3 text-xs text-slate-500 mt-1">
+                                              <span>Hạn: {task.dueDate}</span>
+                                              <span>Ưu tiên: {task.priority}</span>
+                                          </div>
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
+                  )}
               </div>
           </div>
       )}

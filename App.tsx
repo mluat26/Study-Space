@@ -5,7 +5,7 @@ import Dashboard from './components/Dashboard';
 import SubjectDetail from './components/SubjectDetail';
 import SearchManager from './components/SearchManager';
 import { DataExportImport } from './components/DataExportImport';
-import { LayoutGrid, Search, Moon, Sun, Database, HardDrive, Download, X, GraduationCap, BookOpen, Menu, ChevronLeft, ChevronRight, Trash2, MoreHorizontal, ArrowUp, ArrowDown, PenSquare, GripVertical, ListFilter, Plus, CheckCircle, FileText, Palette, AlertTriangle, RefreshCcw, Upload, ChevronDown, RotateCcw, Link as LinkIcon, FileAudio, Maximize2, Archive, RotateCw, AlertCircle, UploadCloud, Image as ImageIcon, Crop, FileBox, Music, Eye } from 'lucide-react';
+import { LayoutGrid, Search, Moon, Sun, Database, HardDrive, Download, X, GraduationCap, BookOpen, Menu, ChevronLeft, ChevronRight, Trash2, MoreHorizontal, ArrowUp, ArrowDown, PenSquare, GripVertical, ListFilter, Plus, CheckCircle, FileText, Palette, AlertTriangle, RefreshCcw, Upload, ChevronDown, RotateCcw, Link as LinkIcon, FileAudio, Maximize2, Archive, RotateCw, AlertCircle, UploadCloud, Image as ImageIcon, Crop, FileBox, Music, Eye, PenTool } from 'lucide-react';
 import { dbGet, dbSet, dbClear, getUsageEstimate, calculateObjectSize } from './utils/indexedDB';
 import Cropper from 'react-easy-crop';
 
@@ -263,6 +263,17 @@ const SubjectDrawer = ({ isOpen, onClose, onSave, lang, initialData }: any) => {
 
     const finalColor = showCustomColor ? customHex : selectedColor;
 
+    const renderPreviewIcon = (iconName: string, className: string) => {
+        if (iconName.startsWith('<svg')) {
+            return <div className={className} dangerouslySetInnerHTML={{ __html: iconName }} />;
+        }
+        if (iconName.startsWith('data:image') || iconName.startsWith('http')) {
+            return <img src={iconName} className={`${className} object-cover rounded-md`} alt="icon" />;
+        }
+        const IconComp = ICONS[iconName] || BookOpen;
+        return <IconComp className={className} />;
+    }
+
     if (!isOpen) return null;
     
     const handleSubmit = () => {
@@ -279,77 +290,141 @@ const SubjectDrawer = ({ isOpen, onClose, onSave, lang, initialData }: any) => {
         }
     }
 
+    // Dynamic styles for preview
+    const isCustom = finalColor.startsWith('#');
+    const cardStyle = isCustom ? { backgroundColor: finalColor } : {};
+    const cardClass = isCustom ? '' : finalColor;
+
     return (
         <>
         <div className="fixed inset-0 bg-black/30 z-[60] transition-opacity" onClick={onClose}></div>
-        <div className="fixed top-0 right-0 h-full w-full md:w-[420px] bg-white dark:bg-slate-900 z-[70] shadow-2xl flex flex-col border-l border-gray-200 dark:border-slate-800 animate-in slide-in-from-right duration-300">
-            <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-900">
-                <h2 className="text-xl font-bold text-gray-800 dark:text-white">
-                    {initialData ? 'Chỉnh sửa môn học' : t.createSubject}
-                </h2>
-                <button onClick={onClose}><X className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"/></button>
-            </div>
+        <div className="fixed top-0 right-0 h-full w-full md:w-[800px] lg:w-[900px] bg-white dark:bg-slate-900 z-[70] shadow-2xl flex flex-col md:flex-row border-l border-gray-200 dark:border-slate-800 animate-in slide-in-from-right duration-300">
             
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                <div>
-                    <label className="block text-sm font-semibold text-gray-700 dark:text-slate-300 mb-2">{t.name}</label>
-                    <input value={name} onChange={e => setName(e.target.value)} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none transition dark:bg-slate-950 dark:text-white" placeholder="..." autoFocus/>
+            {/* LEFT COLUMN: FORM */}
+            <div className="flex-1 flex flex-col h-full border-r border-gray-100 dark:border-slate-800">
+                <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-900">
+                    <h2 className="text-xl font-bold text-gray-800 dark:text-white">
+                        {initialData ? 'Chỉnh sửa môn học' : t.createSubject}
+                    </h2>
+                    <button onClick={onClose} className="md:hidden"><X className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"/></button>
                 </div>
-                <div>
-                    <label className="block text-sm font-semibold text-gray-700 dark:text-slate-300 mb-2">{t.desc}</label>
-                    <input value={desc} onChange={e => setDesc(e.target.value)} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none transition dark:bg-slate-950 dark:text-white" placeholder="..." />
-                </div>
-                <div>
-                    <label className="block text-sm font-semibold text-gray-700 dark:text-slate-300 mb-2">Ngày tạo</label>
-                    <input type="date" value={createdAt} onChange={e => setCreatedAt(e.target.value)} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none transition dark:bg-slate-950 dark:text-white" />
-                </div>
-
-                <div>
-                    <label className="block text-sm font-semibold text-gray-700 dark:text-slate-300 mb-2">{t.icon}</label>
-                    <IconPicker selected={icon} onSelect={setIcon} />
-                </div>
-
-                <div className="border-t border-gray-100 dark:border-slate-800 pt-6">
-                    <label className="block text-sm font-semibold text-gray-700 dark:text-slate-300 mb-3">{t.color}</label>
-                    <div className="flex flex-wrap gap-2 mb-4">
-                        {baseColors.map(c => (
-                            <button 
-                                key={c} 
-                                onClick={() => { setSelectedColor(c); setShowCustomColor(false); }}
-                                className={`w-8 h-8 rounded-full ${c} ${selectedColor === c && !showCustomColor ? 'ring-2 ring-offset-2 ring-gray-400 dark:ring-slate-500 scale-110' : 'hover:scale-110'} transition-all`}
-                            />
-                        ))}
-                        <button 
-                            onClick={() => { setShowCustomColor(true); setSelectedColor('custom'); }}
-                            className={`w-8 h-8 rounded-full bg-white dark:bg-slate-800 border-2 border-dashed border-gray-300 dark:border-slate-600 flex items-center justify-center text-gray-400 hover:text-emerald-500 hover:border-emerald-500 transition-all ${showCustomColor ? 'ring-2 ring-offset-2 ring-emerald-500 border-emerald-500 text-emerald-500' : ''}`}
-                            title="Tùy chỉnh màu"
-                        >
-                            <Plus size={14} strokeWidth={3} />
-                        </button>
+                
+                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                    <div>
+                        <label className="block text-sm font-semibold text-gray-700 dark:text-slate-300 mb-2">{t.name}</label>
+                        <input value={name} onChange={e => setName(e.target.value)} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none transition dark:bg-slate-950 dark:text-white" placeholder="Nhập tên môn học..." autoFocus/>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-semibold text-gray-700 dark:text-slate-300 mb-2">{t.desc}</label>
+                        <input value={desc} onChange={e => setDesc(e.target.value)} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none transition dark:bg-slate-950 dark:text-white" placeholder="Mô tả ngắn gọn..." />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-semibold text-gray-700 dark:text-slate-300 mb-2">Ngày tạo</label>
+                        <input type="date" value={createdAt} onChange={e => setCreatedAt(e.target.value)} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none transition dark:bg-slate-950 dark:text-white" />
                     </div>
 
-                    {showCustomColor && (
-                        <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 animate-in fade-in zoom-in duration-200">
-                            <div className="flex items-center gap-4">
-                                <div className="relative w-12 h-12 rounded-full overflow-hidden shadow-sm border border-gray-200 dark:border-slate-600 flex-shrink-0">
-                                    <input type="color" value={customHex} onChange={(e) => setCustomHex(e.target.value)} className="absolute inset-0 w-[150%] h-[150%] -top-1/4 -left-1/4 cursor-pointer p-0 border-0"/>
-                                </div>
-                                <div className="flex-1">
-                                    <label className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase mb-1 block">Mã màu (Hex)</label>
-                                    <div className="flex items-center bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2">
-                                        <span className="text-gray-400 mr-2">#</span>
-                                        <input value={customHex.replace('#', '')} onChange={(e) => setCustomHex(`#${e.target.value}`)} className="w-full outline-none bg-transparent text-sm font-mono text-gray-800 dark:text-white uppercase" maxLength={6}/>
+                    <div>
+                        <label className="block text-sm font-semibold text-gray-700 dark:text-slate-300 mb-2">{t.icon}</label>
+                        <IconPicker selected={icon} onSelect={setIcon} />
+                    </div>
+
+                    <div className="border-t border-gray-100 dark:border-slate-800 pt-6">
+                        <label className="block text-sm font-semibold text-gray-700 dark:text-slate-300 mb-3">{t.color}</label>
+                        <div className="flex flex-wrap gap-2 mb-4">
+                            {baseColors.map(c => (
+                                <button 
+                                    key={c} 
+                                    onClick={() => { setSelectedColor(c); setShowCustomColor(false); }}
+                                    className={`w-8 h-8 rounded-full ${c} ${selectedColor === c && !showCustomColor ? 'ring-2 ring-offset-2 ring-gray-400 dark:ring-slate-500 scale-110' : 'hover:scale-110'} transition-all`}
+                                />
+                            ))}
+                            <button 
+                                onClick={() => { setShowCustomColor(true); setSelectedColor('custom'); }}
+                                className={`w-8 h-8 rounded-full bg-white dark:bg-slate-800 border-2 border-dashed border-gray-300 dark:border-slate-600 flex items-center justify-center text-gray-400 hover:text-emerald-500 hover:border-emerald-500 transition-all ${showCustomColor ? 'ring-2 ring-offset-2 ring-emerald-500 border-emerald-500 text-emerald-500' : ''}`}
+                                title="Tùy chỉnh màu"
+                            >
+                                <Plus size={14} strokeWidth={3} />
+                            </button>
+                        </div>
+
+                        {showCustomColor && (
+                            <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 animate-in fade-in zoom-in duration-200">
+                                <div className="flex items-center gap-4">
+                                    <div className="relative w-12 h-12 rounded-full overflow-hidden shadow-sm border border-gray-200 dark:border-slate-600 flex-shrink-0">
+                                        <input type="color" value={customHex} onChange={(e) => setCustomHex(e.target.value)} className="absolute inset-0 w-[150%] h-[150%] -top-1/4 -left-1/4 cursor-pointer p-0 border-0"/>
+                                    </div>
+                                    <div className="flex-1">
+                                        <label className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase mb-1 block">Mã màu (Hex)</label>
+                                        <div className="flex items-center bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2">
+                                            <span className="text-gray-400 mr-2">#</span>
+                                            <input value={customHex.replace('#', '')} onChange={(e) => setCustomHex(`#${e.target.value}`)} className="w-full outline-none bg-transparent text-sm font-mono text-gray-800 dark:text-white uppercase" maxLength={6}/>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    )}
-                    <div className={`mt-4 h-14 rounded-xl w-full flex items-center justify-center shadow-sm transition-all duration-200 relative overflow-hidden text-white font-bold text-lg ${!showCustomColor ? selectedColor : ''}`} style={{ backgroundColor: showCustomColor ? customHex : undefined }}>{name || 'Tên môn học'}</div>
+                        )}
+                    </div>
+                </div>
+
+                <div className="p-6 border-t border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-900">
+                    <button onClick={handleSubmit} className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700 transition shadow-lg shadow-emerald-200 dark:shadow-none">{t.save}</button>
                 </div>
             </div>
 
-            <div className="p-6 border-t border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-900">
-                <button onClick={handleSubmit} className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700 transition shadow-lg shadow-emerald-200 dark:shadow-none">{t.save}</button>
+            {/* RIGHT COLUMN: PREVIEW */}
+            <div className="hidden md:flex w-[40%] bg-gray-50 dark:bg-slate-950 flex-col items-center justify-center p-8 border-l border-gray-100 dark:border-slate-800">
+                <h3 className="text-xs font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest mb-6">Live Preview</h3>
+                
+                <div 
+                    className={`w-full max-w-sm aspect-[4/5] rounded-3xl shadow-2xl relative overflow-hidden flex flex-col group ${cardClass}`}
+                    style={cardStyle}
+                >
+                    {/* Watermark Icon */}
+                    <div className="absolute -right-6 -bottom-6 opacity-10 transform rotate-12 transition-transform group-hover:scale-110 pointer-events-none">
+                        {renderPreviewIcon(icon, "w-48 h-48 text-white")}
+                    </div>
+
+                    <div className="p-6 flex flex-col flex-1 relative z-10">
+                        <div className="flex justify-between items-start mb-6">
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-white/90 bg-white/20 backdrop-blur-sm shadow-inner overflow-hidden`}>
+                                {renderPreviewIcon(icon, "w-7 h-7")}
+                            </div>
+                            <div className="flex gap-1 opacity-60">
+                                <div className="p-1.5 rounded-lg bg-white/10"><PenTool size={16} className="text-white"/></div>
+                                <div className="p-1.5 rounded-lg bg-white/10"><Archive size={16} className="text-white"/></div>
+                            </div>
+                        </div>
+
+                        <h3 className="font-bold text-3xl mb-2 tracking-tight text-white leading-tight break-words">{name || 'Tên môn học'}</h3>
+                        <p className="text-lg line-clamp-3 font-medium text-white/70 mb-8">{desc || 'Mô tả ngắn gọn về môn học sẽ hiện ở đây...'}</p>
+                        
+                        {/* Stats Grid Placeholder */}
+                        <div className="grid grid-cols-3 gap-3 mt-auto">
+                            <div className="bg-black/10 backdrop-blur-sm rounded-xl p-3 text-center border border-white/5">
+                                <div className="text-white/70 mb-1"><CheckCircle size={16} className="mx-auto"/></div>
+                                <span className="font-bold text-base text-white">0</span>
+                            </div>
+                            <div className="bg-black/10 backdrop-blur-sm rounded-xl p-3 text-center border border-white/5">
+                                <div className="text-white/70 mb-1"><FileText size={16} className="mx-auto"/></div>
+                                <span className="font-bold text-base text-white">0</span>
+                            </div>
+                            <div className="bg-black/10 backdrop-blur-sm rounded-xl p-3 text-center border border-white/5">
+                                <div className="text-white/70 mb-1"><LinkIcon size={16} className="mx-auto"/></div>
+                                <span className="font-bold text-base text-white">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="mt-8 text-center px-6">
+                    <p className="text-sm text-gray-500 dark:text-slate-400">
+                        Thẻ này sẽ hiển thị trên Dashboard của bạn. Hãy chọn icon và màu sắc dễ nhận biết!
+                    </p>
+                </div>
+
+                <button onClick={onClose} className="absolute top-6 right-6 p-2 rounded-full bg-white dark:bg-slate-800 text-gray-400 hover:text-red-500 shadow-sm border border-gray-100 dark:border-slate-700 transition">
+                    <X size={20}/>
+                </button>
             </div>
         </div>
         </>
