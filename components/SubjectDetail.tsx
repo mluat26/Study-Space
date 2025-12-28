@@ -240,7 +240,7 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
           // Reset state
           setPageNum(1);
           setNumPages(0);
-          setScale(1.0);
+          setScale(1.2); // Default scale slightly larger for readability
           setPdfDoc(null);
           setPdfError(null);
 
@@ -259,7 +259,7 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       }
   }, [previewResource]);
 
-  // PDF Render Page Effect
+  // PDF Render Page Effect (Fixes Distortion and Blurriness)
   useEffect(() => {
       const renderPage = async () => {
           if (!pdfDoc || !canvasRef.current) return;
@@ -270,20 +270,31 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
               }
 
               const page = await pdfDoc.getPage(pageNum);
-              const viewport = page.getViewport({ scale });
               const canvas = canvasRef.current;
               const context = canvas.getContext('2d');
 
               if (!context) return;
 
-              canvas.height = viewport.height;
-              canvas.width = viewport.width;
-              
-              // Clear canvas before render
-              context.clearRect(0, 0, canvas.width, canvas.height);
+              // Handle High DPI (Retina) Displays
+              const outputScale = window.devicePixelRatio || 1;
+              const viewport = page.getViewport({ scale: scale });
+
+              // Set dimensions to match output scale (internal pixels)
+              canvas.width = Math.floor(viewport.width * outputScale);
+              canvas.height = Math.floor(viewport.height * outputScale);
+
+              // Explicitly set CSS width/height to match viewport (logical pixels)
+              // This prevents "stretching/flattening" by Flexbox or mismatched defaults
+              canvas.style.width = Math.floor(viewport.width) + "px";
+              canvas.style.height = Math.floor(viewport.height) + "px";
+
+              const transform = outputScale !== 1
+                ? [outputScale, 0, 0, outputScale, 0, 0]
+                : null;
 
               const renderContext = {
                   canvasContext: context,
+                  transform: transform,
                   viewport: viewport,
               };
 
@@ -996,7 +1007,13 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       const limitedName = fileNameWithoutExt.split(/\s+/).slice(0, 8).join(" ");
       setResTitle(limitedName);
       
-      setResType('File');
+      // Auto detect Audio types
+      if (file.type.startsWith('audio/')) {
+          setResType('Audio');
+      } else {
+          setResType('File');
+      }
+
       const reader = new FileReader();
       reader.onload = (e) => {
           if (e.target?.result) {
