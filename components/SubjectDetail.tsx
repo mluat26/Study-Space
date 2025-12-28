@@ -228,7 +228,13 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
 
   // PDF Loading Effect
   useEffect(() => {
-      if (previewResource && (previewResource.type === 'File' || (previewResource.type === 'Link' && previewResource.url.endsWith('.pdf')))) {
+      // Check for actual PDF: Type File + starts with data:application/pdf OR Type Link + ends with .pdf
+      const isPdf = previewResource && (
+          (previewResource.type === 'File' && previewResource.url.startsWith('data:application/pdf')) || 
+          (previewResource.type === 'Link' && previewResource.url.toLowerCase().endsWith('.pdf'))
+      );
+
+      if (isPdf) {
           // Reset state
           setPageNum(1);
           setNumPages(0);
@@ -237,7 +243,7 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
 
           const loadPdf = async () => {
               try {
-                  const loadingTask = pdfjs.getDocument(previewResource.url);
+                  const loadingTask = pdfjs.getDocument(previewResource!.url);
                   const pdf = await loadingTask.promise;
                   setPdfDoc(pdf);
                   setNumPages(pdf.numPages);
@@ -1516,7 +1522,14 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
               <div className="flex-1 flex overflow-hidden relative">
                   <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white dark:bg-slate-900">
                       <div className="w-full h-full bg-white dark:bg-slate-900 flex flex-col">
-                          <RichTextEditor ref={editorRef} initialContent={noteContent} onChange={() => setIsNoteDirty(true)} placeholder="Bắt đầu viết ghi chú..." onSave={handleSaveNote}/>
+                          <RichTextEditor 
+                            ref={editorRef} 
+                            initialContent={noteContent} 
+                            onChange={() => setIsNoteDirty(true)} 
+                            placeholder="Bắt đầu viết ghi chú..." 
+                            onSave={handleSaveNote}
+                            onOpenAISidebar={() => toggleSidebar('ai')} // Updated: Pass handler
+                          />
                       </div>
                   </div>
 
@@ -1881,7 +1894,7 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                               </div>
                           </div>
                           <div className="flex-1 bg-gray-100 dark:bg-slate-950/50 p-6 flex items-center justify-center overflow-hidden relative">
-                               {previewResource.type === 'Link' ? (
+                               {previewResource.type === 'Link' && !previewResource.url.toLowerCase().endsWith('.pdf') ? (
                                     <div className="w-full h-full relative rounded-2xl border border-gray-200 dark:border-slate-800 bg-white overflow-hidden group">
                                          {getYoutubeEmbedUrl(previewResource.url) ? (
                                              <iframe 
@@ -1908,7 +1921,10 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                                         <h3 className="text-xl font-bold mb-6 dark:text-white">Phát ghi âm</h3>
                                         <audio controls src={previewResource.url} className="w-full h-12" autoPlay />
                                     </div>
-                                ) : (previewResource.type === 'File' || previewResource.url.endsWith('.pdf')) ? (
+                                ) : (
+                                    (previewResource.type === 'File' && previewResource.url.startsWith('data:application/pdf')) || 
+                                    (previewResource.type === 'Link' && previewResource.url.toLowerCase().endsWith('.pdf'))
+                                ) ? (
                                     // PDF Viewer
                                     <div className="w-full h-full flex flex-col bg-gray-200 dark:bg-slate-900 rounded-xl overflow-hidden shadow-inner relative">
                                         {/* PDF Toolbar */}

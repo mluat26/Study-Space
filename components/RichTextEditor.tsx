@@ -23,12 +23,13 @@ interface RichTextEditorProps {
     onChange: (content: string) => void;
     placeholder?: string;
     onSave?: () => void;
+    onOpenAISidebar?: () => void;
 }
 
 // A4 Height approx 1123px at 96DPI. We use a pattern height slightly smaller for screen viewing comfort.
 const PAGE_HEIGHT_PX = 1123; 
 
-const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ initialContent, onChange, placeholder, onSave }, ref) => {
+const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ initialContent, onChange, placeholder, onSave, onOpenAISidebar }, ref) => {
     const editorRef = useRef<HTMLDivElement>(null);
     const [fontName, setFontName] = useState('Inter');
     const [summary, setSummary] = useState('');
@@ -568,7 +569,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                 )}
 
                 {/* AI Summary Box - Enhanced Collapsible Card Style */}
-                {summary && (
+                {summary ? (
                     <div className="m-5 rounded-2xl border border-emerald-100 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-900/10 overflow-hidden shadow-sm transition-all duration-300 select-none">
                         <div 
                             className="p-3 flex items-center justify-between cursor-pointer hover:bg-emerald-100/50 dark:hover:bg-emerald-900/20 transition"
@@ -594,11 +595,25 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                             </div>
                         )}
                     </div>
+                ) : (
+                    <div 
+                        onClick={onOpenAISidebar}
+                        className="m-5 rounded-2xl border border-dashed border-gray-200 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-900/50 p-4 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-800 transition group select-none"
+                    >
+                        <div className="flex items-start gap-3">
+                            <Sparkles size={18} className="text-gray-400 group-hover:text-emerald-500 transition-colors mt-0.5" />
+                            <div>
+                                <h4 className="text-sm font-bold text-gray-500 dark:text-slate-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                                    Ghi chú chưa tóm tắt
+                                </h4>
+                                <p className="text-xs text-gray-400 dark:text-slate-500 italic mt-1">
+                                    Nội dung tóm tắt sẽ hiển thị tại đây...
+                                </p>
+                            </div>
+                        </div>
+                    </div>
                 )}
                 
-                {/* Fallback placeholder if summary is empty but user might want to know where it appears (Optional/Temporary) */}
-                {/* Removed the empty placeholder logic to keep UI clean, it appears when summary exists */}
-
                 {/* Content Editable */}
                 <div 
                     ref={editorRef}
