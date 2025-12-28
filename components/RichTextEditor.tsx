@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
-import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight, RotateCcw, RotateCw, Type, Palette, ChevronDown, ChevronUp, Sparkles, Image as ImageIcon, FileUp, MoreHorizontal, Trash, Maximize2, Minimize2, Settings, HelpCircle, Keyboard, X, Link as LinkIcon, Download } from 'lucide-react';
+import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight, RotateCcw, RotateCw, Type, Palette, ChevronDown, ChevronUp, Sparkles, Image as ImageIcon, FileUp, MoreHorizontal, Trash, Maximize2, Minimize2, Settings, HelpCircle, Keyboard, X, Link as LinkIcon, Download, Minus } from 'lucide-react';
 import * as mammoth from "https://esm.sh/mammoth@1.6.0";
 import * as pdfjsLib from "https://esm.sh/pdfjs-dist@3.11.174";
 
@@ -228,6 +228,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                     '1. ': { cmd: 'insertOrderedList' },
                     '> ': { cmd: 'formatBlock', val: 'BLOCKQUOTE' },
                     '``` ': { cmd: 'formatBlock', val: 'PRE' }, // Code block
+                    '--- ': { cmd: 'insertHorizontalRule' }, // Divider
                 };
 
                 // Check if text matches pattern exactly (indicating start of line)
@@ -402,6 +403,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
         { key: '1. + Space', desc: 'Danh sách số' },
         { key: '> + Space', desc: 'Trích dẫn' },
         { key: '``` + Space', desc: 'Khung Code' },
+        { key: '--- + Space', desc: 'Dòng kẻ ngang' },
         { key: 'Ctrl + B/I/U', desc: 'Đậm/Nghiêng/Gạch' },
         { key: 'Tab', desc: 'Thụt đầu dòng' },
     ];
@@ -471,10 +473,11 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                 </div>
                 <div className="h-4 w-px bg-gray-200 dark:bg-slate-700 mx-1"></div>
 
-                {/* Lists */}
+                {/* Lists & Divider */}
                 <div className="flex items-center gap-0.5">
                     <button onClick={() => exec('insertUnorderedList')} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-800 rounded text-slate-600 dark:text-slate-400"><List size={16}/></button>
                     <button onClick={() => exec('insertOrderedList')} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-800 rounded text-slate-600 dark:text-slate-400"><ListOrdered size={16}/></button>
+                    <button onClick={() => exec('insertHorizontalRule')} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-800 rounded text-slate-600 dark:text-slate-400" title="Chèn dòng kẻ"><Minus size={16}/></button>
                 </div>
                 <div className="h-4 w-px bg-gray-200 dark:bg-slate-700 mx-1"></div>
 
@@ -548,7 +551,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                 </div>
             </div>
             
-            {/* Editor Container - Removed p-6 for full width */}
+            {/* Editor Container - Added text-gray-800 dark:text-gray-100 for visibility */}
             <div className="flex-1 overflow-y-auto relative flex flex-col cursor-text relative editor-scroll-container" onClick={() => editorRef.current?.focus()}>
                 
                 {/* Floating Image Toolbar */}
@@ -617,7 +620,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                 {/* Content Editable */}
                 <div 
                     ref={editorRef}
-                    className="flex-1 outline-none prose prose-slate max-w-none dark:prose-invert prose-p:my-2 prose-headings:mb-3 prose-headings:mt-4 prose-img:rounded-xl prose-img:shadow-sm page-view-editor"
+                    className="flex-1 outline-none prose prose-slate max-w-none dark:prose-invert prose-p:my-2 prose-headings:mb-3 prose-headings:mt-4 prose-img:rounded-xl prose-img:shadow-sm page-view-editor text-gray-800 dark:text-gray-100"
                     contentEditable
                     onInput={handleChange}
                     onKeyUp={handleKeyUp}

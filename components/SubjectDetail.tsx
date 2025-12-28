@@ -1395,18 +1395,39 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                                      </p>
                                 )}
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 gap-4">
                                 <div>
                                     <label className="block text-sm font-semibold mb-2 dark:text-gray-300">Hạn chót</label>
                                     <input type="date" value={newTaskDate} onChange={(e) => setNewTaskDate(e.target.value)} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none dark:bg-slate-950 dark:text-white"/>
                                 </div>
                                 <div>
                                      <label className="block text-sm font-semibold mb-2 dark:text-gray-300">Độ ưu tiên</label>
-                                     <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(e.target.value as any)} className="w-full border border-gray-300 dark:border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none dark:bg-slate-950 dark:text-white">
-                                         <option value="Low">Thấp</option>
-                                         <option value="Medium">Trung bình</option>
-                                         <option value="High">Cao</option>
-                                     </select>
+                                     <div className="flex gap-3">
+                                        {[
+                                            { value: 'Low', label: 'Thấp', color: 'green' },
+                                            { value: 'Medium', label: 'Trung bình', color: 'yellow' },
+                                            { value: 'High', label: 'Cao', color: 'red' }
+                                        ].map((p) => {
+                                            const isSelected = newTaskPriority === p.value;
+                                            return (
+                                                <button
+                                                    key={p.value}
+                                                    onClick={() => setNewTaskPriority(p.value as any)}
+                                                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition-all ${
+                                                        isSelected 
+                                                            ? p.value === 'High' 
+                                                                ? 'bg-red-100 text-red-700 border-red-500 dark:bg-red-900/30 dark:text-red-400 dark:border-red-500'
+                                                                : p.value === 'Medium'
+                                                                    ? 'bg-yellow-100 text-yellow-700 border-yellow-500 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-500'
+                                                                    : 'bg-green-100 text-green-700 border-green-500 dark:bg-green-900/30 dark:text-green-400 dark:border-green-500'
+                                                            : 'bg-white dark:bg-slate-950 border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'
+                                                    }`}
+                                                >
+                                                    {p.label}
+                                                </button>
+                                            )
+                                        })}
+                                    </div>
                                 </div>
                             </div>
                           </>
@@ -1579,36 +1600,66 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
                             ) : (
                                 <>
                                     {extractedLinks.map((link, idx) => (
-                                        <div key={`link-${idx}`} className="flex items-center gap-3 p-3 border border-gray-100 dark:border-slate-800 rounded-xl hover:border-blue-500 transition-colors bg-white dark:bg-slate-800 shadow-sm group">
+                                        <div 
+                                            key={`link-${idx}`} 
+                                            onClick={() => setPreviewResource({
+                                                id: `link-${idx}`,
+                                                subjectId: subject.id,
+                                                title: link.text,
+                                                type: 'Link',
+                                                url: link.href
+                                            })}
+                                            className="flex items-center gap-3 p-3 border border-gray-100 dark:border-slate-800 rounded-xl hover:border-blue-500 transition-colors bg-white dark:bg-slate-800 shadow-sm group cursor-pointer"
+                                        >
                                              <div className="w-8 h-8 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center text-blue-500 dark:text-blue-400 flex-shrink-0"><LinkIcon size={14}/></div>
                                             <div className="flex-1 min-w-0">
-                                                <a href={link.href} target="_blank" rel="noreferrer" className="font-bold text-gray-800 dark:text-white text-xs truncate hover:underline block" title={link.href}>{link.text}</a>
+                                                <span className="font-bold text-gray-800 dark:text-white text-xs truncate hover:underline block" title={link.href}>{link.text}</span>
                                                 <p className="text-[10px] text-gray-400 truncate">{link.href}</p>
                                             </div>
-                                            <button onClick={() => deleteLinkAttachment(link.href)} className="p-1.5 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); deleteLinkAttachment(link.href); }} className="p-1.5 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
                                         </div>
                                     ))}
                                     {extractedImages.map((imgSrc, idx) => (
-                                        <div key={`img-${idx}`} className="flex items-center gap-3 p-3 border border-gray-100 dark:border-slate-800 rounded-xl hover:border-orange-500 transition-colors bg-white dark:bg-slate-800 shadow-sm group">
+                                        <div 
+                                            key={`img-${idx}`} 
+                                            onClick={() => setPreviewResource({
+                                                id: `img-${idx}`,
+                                                subjectId: subject.id,
+                                                title: `Hình ảnh ${idx + 1}`,
+                                                type: 'File',
+                                                url: imgSrc
+                                            })}
+                                            className="flex items-center gap-3 p-3 border border-gray-100 dark:border-slate-800 rounded-xl hover:border-orange-500 transition-colors bg-white dark:bg-slate-800 shadow-sm group cursor-pointer"
+                                        >
                                             <div className="w-8 h-8 rounded-full bg-orange-50 dark:bg-orange-900/30 flex items-center justify-center text-orange-500 dark:text-orange-400 flex-shrink-0"><ImageIcon size={14}/></div>
                                             <div className="flex-1 min-w-0">
                                                 <h4 className="font-bold text-gray-800 dark:text-white text-xs truncate">Hình ảnh {idx + 1}</h4>
                                                 <p className="text-[10px] text-gray-500 dark:text-slate-400">Trong nội dung</p>
                                             </div>
                                             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <a href={imgSrc} download={`image-${idx}.png`} className="p-1.5 text-gray-300 hover:text-blue-500 transition-colors"><Download size={16} /></a>
-                                                <button onClick={() => deleteImageAttachment(imgSrc)} className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                                                <a href={imgSrc} download={`image-${idx}.png`} onClick={(e) => e.stopPropagation()} className="p-1.5 text-gray-300 hover:text-blue-500 transition-colors"><Download size={16} /></a>
+                                                <button onClick={(e) => { e.stopPropagation(); deleteImageAttachment(imgSrc); }} className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
                                             </div>
                                         </div>
                                     ))}
                                     {audioAttachments.map(audio => (
-                                        <div key={audio.id} className="flex items-center gap-3 p-3 border border-gray-100 dark:border-slate-800 rounded-xl hover:border-emerald-500 transition-colors bg-white dark:bg-slate-800 shadow-sm group">
-                                            <button onClick={() => { const a = new Audio(audio.url); a.play(); }} className="w-8 h-8 rounded-full bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center text-emerald-500 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors flex-shrink-0"><Play size={14} fill="currentColor"/></button>
+                                        <div 
+                                            key={audio.id} 
+                                            onClick={() => setPreviewResource({
+                                                id: audio.id,
+                                                subjectId: subject.id,
+                                                title: audio.name,
+                                                type: 'Audio',
+                                                url: audio.url
+                                            })}
+                                            className="flex items-center gap-3 p-3 border border-gray-100 dark:border-slate-800 rounded-xl hover:border-emerald-500 transition-colors bg-white dark:bg-slate-800 shadow-sm group cursor-pointer"
+                                        >
+                                            <div className="w-8 h-8 rounded-full bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center text-emerald-500 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors flex-shrink-0"><Play size={14} fill="currentColor"/></div>
                                             <div className="flex-1 min-w-0">
                                                 <h4 className="font-bold text-gray-800 dark:text-white text-xs truncate">{audio.name}</h4>
                                                 <p className="text-[10px] text-gray-500 dark:text-slate-400">{new Date(audio.createdAt).toLocaleString()}</p>
                                             </div>
-                                            <button onClick={() => deleteAudioAttachment(audio.id)} className="p-1.5 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); deleteAudioAttachment(audio.id); }} className="p-1.5 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
                                         </div>
                                     ))}
                                 </>
