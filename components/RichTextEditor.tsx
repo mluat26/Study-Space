@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
-import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight, RotateCcw, RotateCw, Type, Palette, ChevronDown, Sparkles, Image as ImageIcon, FileUp, MoreHorizontal, Trash, Maximize2, Minimize2, Settings, HelpCircle, Keyboard, X, Link as LinkIcon, Download } from 'lucide-react';
+import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight, RotateCcw, RotateCw, Type, Palette, ChevronDown, ChevronUp, Sparkles, Image as ImageIcon, FileUp, MoreHorizontal, Trash, Maximize2, Minimize2, Settings, HelpCircle, Keyboard, X, Link as LinkIcon, Download } from 'lucide-react';
 import * as mammoth from "https://esm.sh/mammoth@1.6.0";
 import * as pdfjsLib from "https://esm.sh/pdfjs-dist@3.11.174";
 
@@ -32,6 +32,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
     const editorRef = useRef<HTMLDivElement>(null);
     const [fontName, setFontName] = useState('Inter');
     const [summary, setSummary] = useState('');
+    const [isSummaryExpanded, setIsSummaryExpanded] = useState(true); // New state for collapsing
     const fileInputRef = useRef<HTMLInputElement>(null);
     const docInputRef = useRef<HTMLInputElement>(null);
     const [showShortcuts, setShowShortcuts] = useState(false);
@@ -63,6 +64,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
         },
         setSummary: (html: string) => {
             setSummary(html);
+            setIsSummaryExpanded(true); // Auto expand when new summary arrives
         }
     }));
 
@@ -565,22 +567,37 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({ ini
                     </div>
                 )}
 
-                {/* AI Summary Box - Full width styling to align with content padding */}
-                <div className={`p-5 border-b border-gray-100 dark:border-slate-800 transition-all duration-300 select-none ${summary ? 'bg-emerald-50 dark:bg-emerald-900/10 opacity-100' : 'bg-slate-50 dark:bg-slate-800/30 opacity-40 hover:opacity-100'}`}>
-                    <div className="flex items-center gap-2 mb-2">
-                        <Sparkles size={16} className={summary ? "text-emerald-500" : "text-gray-400"} />
-                        <span className={`text-sm font-bold ${summary ? "text-emerald-700 dark:text-emerald-400" : "text-gray-500"}`}>
-                            {summary ? "Tóm tắt AI" : "Ghi chú chưa tóm tắt"}
-                        </span>
-                    </div>
-                    <div className={`text-sm leading-relaxed ${summary ? "text-emerald-900 dark:text-emerald-100/80" : "text-gray-400 italic"}`}>
-                        {summary ? (
-                            <div dangerouslySetInnerHTML={{__html: summary.replace(/\n/g, '<br/>')}} />
-                        ) : (
-                            <span>Nội dung tóm tắt sẽ hiển thị tại đây...</span>
+                {/* AI Summary Box - Enhanced Collapsible Card Style */}
+                {summary && (
+                    <div className="m-5 rounded-2xl border border-emerald-100 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-900/10 overflow-hidden shadow-sm transition-all duration-300 select-none">
+                        <div 
+                            className="p-3 flex items-center justify-between cursor-pointer hover:bg-emerald-100/50 dark:hover:bg-emerald-900/20 transition"
+                            onClick={() => setIsSummaryExpanded(!isSummaryExpanded)}
+                        >
+                            <div className="flex items-center gap-2">
+                                <Sparkles size={18} className="text-emerald-500 fill-emerald-500/20" />
+                                <span className="text-sm font-bold text-emerald-800 dark:text-emerald-200">
+                                    Tóm tắt AI (Summary)
+                                </span>
+                            </div>
+                            <button className="p-1 rounded-full text-emerald-600 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-800/50 transition">
+                                {isSummaryExpanded ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
+                            </button>
+                        </div>
+                        
+                        {isSummaryExpanded && (
+                            <div className="px-5 pb-5 pt-2 border-t border-emerald-100 dark:border-emerald-900/30">
+                                <div 
+                                    className="text-sm leading-relaxed text-emerald-900 dark:text-emerald-100/80 prose prose-sm prose-emerald dark:prose-invert max-w-none"
+                                    dangerouslySetInnerHTML={{__html: summary.replace(/\n/g, '<br/>')}} 
+                                />
+                            </div>
                         )}
                     </div>
-                </div>
+                )}
+                
+                {/* Fallback placeholder if summary is empty but user might want to know where it appears (Optional/Temporary) */}
+                {/* Removed the empty placeholder logic to keep UI clean, it appears when summary exists */}
 
                 {/* Content Editable */}
                 <div 

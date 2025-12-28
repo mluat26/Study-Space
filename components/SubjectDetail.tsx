@@ -319,6 +319,32 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
       return { wordCount, sizeDisplay };
   };
 
+  const getNotePreviewData = (htmlContent: string) => {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(htmlContent, 'text/html');
+      
+      // Extract AI Summary first
+      const summaryDiv = doc.querySelector('.ai-summary-content');
+      const aiSummary = summaryDiv ? (summaryDiv.textContent || '').trim() : null;
+      
+      // Remove summary div to get clean content stats
+      if(summaryDiv) summaryDiv.remove();
+
+      // Check media presence
+      const hasImages = doc.querySelector('img') !== null;
+      const hasAudio = doc.querySelector('.smartstudy-audio-data') !== null;
+      
+      // Get plain text
+      const bodyText = (doc.body.textContent || '').trim();
+
+      return {
+          aiSummary,
+          bodyText,
+          hasImages,
+          hasAudio
+      };
+  };
+
   const parseNoteContent = (htmlContent: string) => {
       const parser = new DOMParser();
       const doc = parser.parseFromString(htmlContent, 'text/html');
@@ -1164,14 +1190,37 @@ const SubjectDetail: React.FC<SubjectDetailProps> = ({
              {noteViewMode === 'grid' ? (
                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                     {notes.map(note => {
-                        const { wordCount, sizeDisplay } = getNoteStats(note.content);
+                        const { aiSummary, bodyText, hasImages, hasAudio } = getNotePreviewData(note.content);
+                        const { sizeDisplay } = getNoteStats(note.content);
+                        
                         return (
                         <div key={note.id} onClick={() => openNote(note)} className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-800 hover:shadow-lg hover:-translate-y-1 hover:border-emerald-500/50 transition-all cursor-pointer group relative flex flex-col h-64">
                             <h3 className="font-bold text-gray-800 dark:text-white mb-2 text-lg line-clamp-2">{note.title}</h3>
-                            <div className="text-gray-500 dark:text-slate-400 text-sm line-clamp-5 mb-4 flex-1 whitespace-pre-wrap leading-relaxed overflow-hidden" dangerouslySetInnerHTML={{ __html: note.content.replace(/<[^>]*>?/gm, ' ') }} />
+                            
+                            <div className="flex-1 overflow-hidden relative">
+                                {aiSummary ? (
+                                    <div className="bg-emerald-50 dark:bg-emerald-900/20 p-3 rounded-xl border border-emerald-100 dark:border-emerald-800/50 mb-2">
+                                        <div className="flex items-center gap-1.5 mb-1 text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                                            <Sparkles size={12}/> AI Summary
+                                        </div>
+                                        <p className="text-sm text-emerald-900 dark:text-emerald-100 line-clamp-3 leading-relaxed">
+                                            {aiSummary}
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <p className="text-gray-500 dark:text-slate-400 text-sm line-clamp-3 leading-relaxed">
+                                        {bodyText || 'Chưa có nội dung...'}
+                                    </p>
+                                )}
+                            </div>
+
                             <div className="flex justify-between items-center mt-auto pt-3 border-t border-gray-50 dark:border-slate-800/50 text-[11px] font-medium text-gray-400 dark:text-slate-500">
                                 <span>{new Date(note.lastModified).toLocaleDateString()}</span>
-                                <div className="flex gap-3"><span>{wordCount} words</span><span>{sizeDisplay}</span></div>
+                                <div className="flex gap-2 items-center">
+                                    {hasImages && <div className="p-1 bg-orange-50 dark:bg-orange-900/20 rounded text-orange-500" title="Có hình ảnh"><ImageIcon size={12}/></div>}
+                                    {hasAudio && <div className="p-1 bg-purple-50 dark:bg-purple-900/20 rounded text-purple-500" title="Có ghi âm"><Mic size={12}/></div>}
+                                    <span>{sizeDisplay}</span>
+                                </div>
                             </div>
                             <button onClick={(e) => { e.stopPropagation(); onDeleteNote(note.id); }} className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 bg-white dark:bg-slate-800 p-1.5 rounded-lg shadow-sm border border-gray-100 dark:border-slate-700 transition-all transform scale-90 hover:scale-100"><Trash2 size={16} /></button>
                         </div>
